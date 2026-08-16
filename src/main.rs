@@ -1,7 +1,9 @@
 // src/main.rs
 
+mod ethernet;
 mod interface;
 
+use ethernet::EthernetFrame;
 use interface::tap::TapInterface;
 
 fn main() -> std::io::Result<()> {
@@ -10,11 +12,12 @@ fn main() -> std::io::Result<()> {
 
     loop {
         let n = tap.read_frame(&mut buffer)?;
-        println!("received {n} bytes");
-
-        for byte in &buffer[..n.min(32)] {
-            print!("{byte:02x} ");
+        match EthernetFrame::parse(&buffer[..n]) {
+            Ok(frame) => println!(
+                "{} -> {} {:?}",
+                frame.source, frame.destination, frame.ethertype
+            ),
+            Err(e) => println!("bad frame ({n} bytes): {e}"),
         }
-        println!();
     }
 }
