@@ -37,7 +37,7 @@ pub fn reply_for(request: &[u8]) -> Option<[u8; 28]> {
         return None;
     }
 
-    let target_ip = [u8; 4] = request[24..28].try_into().ok()?;
+    let target_ip: [u8; 4] = request[24..28].try_into().ok()?;
 
     // ignore replies and requests for other IP addresses
     if operation != ARP_REQUEST || target_ip != OUR_IP {
