@@ -24,7 +24,7 @@ impl TapInterface {
         let file = OpenOptions::new()
             .read(true)
             .write(true)
-            .open(/dev/net/tun)?;
+            .open("/dev/net/tun")?;
 
         let mut ifr: libc::ifreq = unsafe { std::mem::zeroed() };
         for (dst, src) in ifr.ifr_name.iter_mut().zip(name.bytes()) {

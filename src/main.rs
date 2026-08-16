@@ -4,7 +4,7 @@ mod interface;
 
 use interface::tap::TapInterface;
 
-fn main() {
+fn main() -> std::io::Result<()> {
     let mut tap = TapInterface::open("tap0")?;
     let mut buffer = [0u8; 2048];
 
