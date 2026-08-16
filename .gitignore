@@ -1,5 +1,4 @@
-
-
-# Added by cargo
-
 /target
+Cargo.lock
+**/*.rs.bk
+.vscode/
