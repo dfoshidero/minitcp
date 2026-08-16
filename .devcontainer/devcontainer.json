@@ -1,0 +1,30 @@
+{
+    "name": "minitcp",
+    "build": {
+        "dockerfile": "Dockerfile"
+    },
+    "containerUser": "netstack",
+    "remoteUser": "netstack",
+    "updateRemoteUserUID": false,
+    "postCreateCommand": "sudo chown -R \"$(id -u):$(id -g)\" \"${containerWorkspaceFolder}\"",
+    "features": {
+        "ghcr.io/devcontainers/features/rust:1": {}
+    },
+    "capAdd": [
+        "NET_ADMIN",
+        "NET_RAW"
+    ],
+    "runArgs": [
+        "--device=/dev/net/tun"
+    ],
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "rust-lang.rust-analyzer"
+            ],
+            "settings": {
+                "rust-analyzer.server.path": "/usr/local/cargo/bin/rust-analyzer"
+            }
+        }
+    }
+}
