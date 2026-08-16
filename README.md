@@ -1,8 +1,35 @@
 # minitcp
 
-A userspace Ethernet/TCP stack. Linux owns `10.0.0.1` on TAP interface `tap0`; MiniTCP pretends to be another machine at `10.0.0.2`.
+A small userspace TCP/IP stack in Rust. Use it as a practice lab: Linux keeps a real network stack on one side of a virtual cable; you implement the other side, layer by layer.
+
+Linux owns `10.0.0.1` on TAP interface `tap0`. MiniTCP pretends to be another machine at `10.0.0.2`.
 
 Work inside the Dev Container. It has Rust, `/dev/net/tun`, and the privileges needed to create network interfaces.
+
+## Where this sits (OSI)
+
+The OSI model splits networking into seven layers. MiniTCP does not replace the physical NIC. It starts at the Ethernet header and will climb toward TCP.
+
+| Layer | Name | What it does | MiniTCP |
+| --- | --- | --- | --- |
+| 7 | Application | HTTP, DNS, ping's user-facing side | later |
+| 6–5 | Presentation / Session | encoding, connections as apps see them | skip; TCP/IP folds these into 7 and 4 |
+| 4 | Transport | TCP / UDP ports and reliability | later |
+| 3 | Network | IPv4 addresses and routing | later |
+| 2 | Data link | Ethernet MACs, ARP ("who has this IP?") | **here** — Ethernet parse/serialize works |
+| 1 | Physical | bits on a wire | Linux TAP — a virtual Ethernet cable |
+
+TAP is Layer 2: your program reads and writes whole Ethernet frames. TUN would be Layer 3 (raw IP). This project uses TAP because Ethernet and ARP are part of the exercise.
+
+When you `ping 10.0.0.2`, Linux does this from the top down: ICMP (over IP) needs a next-hop MAC, so it broadcasts ARP on `tap0`. MiniTCP currently parses that Ethernet frame. It does not answer ARP yet, so ping failing is expected.
+
+```
+ping 10.0.0.2
+        │
+        ▼
+   Linux (10.0.0.1)  ── Ethernet frames ──►  MiniTCP (10.0.0.2)
+        tap0                                      your code
+```
 
 ## Open the environment
 
@@ -37,7 +64,7 @@ sudo chown -R netstack:netstack /workspaces/minitcp
 
 ## Bring up tap0
 
-TAP presents Ethernet frames (Layer 2). TUN presents IP packets (Layer 3). This project uses TAP because it implements Ethernet and ARP itself.
+`tap0` is not created in the image. It is a live kernel device and disappears when the container restarts. Create it by hand so you can see the route and the ARP.
 
 ```bash
 sudo ip tuntap add dev tap0 mode tap user netstack
@@ -48,8 +75,6 @@ ip route
 ```
 
 `tap0` should be UP, and the routing table should include `10.0.0.0/24 dev tap0`. If this fails, check `sudo -n whoami`, `/dev/net/tun`, and that you are inside the Dev Container. Do not debug Rust until this works.
-
-`tap0` persists until the container restarts. Recreate it if `ip link show tap0` says the device does not exist.
 
 ## Run MiniTCP
 
@@ -80,33 +105,32 @@ sudo ip neigh flush dev tap0
 ping -c 1 -W 1 10.0.0.2
 ```
 
+Parser tests (no TAP required):
+
+```bash
+cargo test
+```
+
 ## What you should see
 
-`cargo run` prints each Ethernet frame as a length plus a short hex dump. The ARP request from ping looks like:
+`cargo run` prints each frame as source MAC, destination MAC, and EtherType:
 
 ```
-received 42 bytes
-ff ff ff ff ff ff 9a ba d6 d1 53 a1 08 06 ... 0a 00 00 01
+02:00:00:00:00:01 -> ff:ff:ff:ff:ff:ff Arp
+02:00:00:00:00:01 -> 33:33:00:00:00:01 Unknown(34525)
 ```
 
-| Bytes | Meaning |
+| Field | Meaning |
 | --- | --- |
-| `ff ff ff ff ff ff` | Ethernet broadcast destination |
-| next 6 bytes | Linux's MAC on `tap0` |
-| `08 06` | EtherType ARP |
-| `0a 00 00 01` | sender IP `10.0.0.1` |
-
-You will also see IPv6 multicast frames starting with `33 33` and EtherType `86 dd`. Ignore those for now.
+| left MAC | Linux's MAC on `tap0` |
+| `ff:ff:ff:ff:ff:ff` | Ethernet broadcast (ARP who-has) |
+| `Arp` | EtherType `0x0806` |
+| `Unknown(34525)` | IPv6 (`0x86dd`). Ignore for now |
 
 `tcpdump` should report the same request: who has `10.0.0.2`, tell `10.0.0.1`.
 
-## Code notes
+## Layout
 
-`src/interface/tap.rs` is Linux I/O only. It does not parse Ethernet, ARP, or IP.
-
-It opens `/dev/net/tun` and attaches to `tap0` with `ioctl(TUNSETIFF)` using `IFF_TAP | IFF_NO_PI`:
-
-- `IFF_TAP` — Ethernet frames, not IP packets
-- `IFF_NO_PI` — no extra packet-info prefix, so the buffer starts at the Ethernet header
-
-The read loop uses a 2048-byte buffer, large enough for a 1500-byte MTU plus headers. `write_frame` is ready but unused until MiniTCP starts answering ARP.
+- `src/interface/tap.rs` — open `/dev/net/tun`, read/write raw frames. No protocol parsing.
+- `src/ethernet.rs` — Ethernet II: destination MAC, source MAC, EtherType, payload.
+- `src/main.rs` — attach to `tap0` and print parsed frames.
