@@ -1,14 +1,14 @@
 # minitcp
 
-A small userspace TCP/IP stack in Rust. Use it as a practice lab: Linux keeps a real network stack on one side of a virtual cable; you implement the other side, layer by layer.
+A small userspace TCP/IP stack in Rust. Linux keeps its stack on one side of a virtual cable; MiniTCP is the machine on the other side.
 
-Linux owns `10.0.0.1` on TAP interface `tap0`. MiniTCP pretends to be another machine at `10.0.0.2`.
+Linux owns `10.0.0.1` on TAP interface `tap0`. MiniTCP pretends to be another machine at `10.0.0.2` with MAC `02:00:00:00:00:02`.
 
 Work inside the Dev Container. It has Rust, `/dev/net/tun`, and the privileges needed to create network interfaces.
 
 ## Where this sits (OSI)
 
-The OSI model splits networking into seven layers. MiniTCP does not replace the physical NIC. It starts at the Ethernet header and will climb toward TCP.
+The OSI model splits networking into seven layers. MiniTCP does not replace the physical NIC. It starts at the Ethernet header and builds toward TCP.
 
 | Layer | Name | What it does | MiniTCP |
 | --- | --- | --- | --- |
@@ -16,19 +16,19 @@ The OSI model splits networking into seven layers. MiniTCP does not replace the 
 | 6–5 | Presentation / Session | encoding, connections as apps see them | skip; TCP/IP folds these into 7 and 4 |
 | 4 | Transport | TCP / UDP ports and reliability | later |
 | 3 | Network | IPv4 addresses and routing | later |
-| 2 | Data link | Ethernet MACs, ARP ("who has this IP?") | **here** — Ethernet parse/serialize works |
+| 2 | Data link | Ethernet MACs, ARP ("who has this IP?") | **here** — Ethernet + ARP reply |
 | 1 | Physical | bits on a wire | Linux TAP — a virtual Ethernet cable |
 
-TAP is Layer 2: your program reads and writes whole Ethernet frames. TUN would be Layer 3 (raw IP). This project uses TAP because Ethernet and ARP are part of the exercise.
+TAP is Layer 2: the program reads and writes whole Ethernet frames. TUN would be Layer 3 (raw IP). MiniTCP uses TAP so Ethernet and ARP stay in userspace.
 
-When you `ping 10.0.0.2`, Linux does this from the top down: ICMP (over IP) needs a next-hop MAC, so it broadcasts ARP on `tap0`. MiniTCP currently parses that Ethernet frame. It does not answer ARP yet, so ping failing is expected.
+When you `ping 10.0.0.2`, Linux needs a MAC for that IP, so it broadcasts ARP on `tap0`. MiniTCP answers: `10.0.0.2` is at `02:00:00:00:00:02`. Ping still fails after that. MiniTCP does not speak IPv4 or ICMP yet.
 
 ```
 ping 10.0.0.2
         │
         ▼
    Linux (10.0.0.1)  ── Ethernet frames ──►  MiniTCP (10.0.0.2)
-        tap0                                      your code
+        tap0
 ```
 
 ## Open the environment
@@ -87,23 +87,22 @@ cargo run
 Terminal 2:
 
 ```bash
+sudo ip neigh flush dev tap0
 ping -c 1 -W 1 10.0.0.2
+ip neigh show dev tap0
 ```
 
-Ping will fail. That is expected: Linux ARPs for `10.0.0.2`, and nothing answers yet.
+Ping will still fail. That is expected: Linux now knows the MAC, but MiniTCP does not answer ICMP yet.
 
-Optional: watch the same ARP on the wire.
+`ip neigh show dev tap0` should contain `10.0.0.2` at `02:00:00:00:00:02`.
+
+Optional: watch ARP on the wire.
 
 ```bash
 sudo tcpdump -eni tap0 arp
 ```
 
-If a previous ping left a failed neighbour entry, flush it and ping again:
-
-```bash
-sudo ip neigh flush dev tap0
-ping -c 1 -W 1 10.0.0.2
-```
+You should see Linux ask "who has `10.0.0.2`, tell `10.0.0.1`" and MiniTCP reply "`10.0.0.2` is at `02:00:00:00:00:02`".
 
 Parser tests (no TAP required):
 
@@ -117,7 +116,6 @@ cargo test
 
 ```
 02:00:00:00:00:01 -> ff:ff:ff:ff:ff:ff Arp
-02:00:00:00:00:01 -> 33:33:00:00:00:01 Unknown(34525)
 ```
 
 | Field | Meaning |
@@ -125,12 +123,14 @@ cargo test
 | left MAC | Linux's MAC on `tap0` |
 | `ff:ff:ff:ff:ff:ff` | Ethernet broadcast (ARP who-has) |
 | `Arp` | EtherType `0x0806` |
-| `Unknown(34525)` | IPv6 (`0x86dd`). Ignore for now |
 
-`tcpdump` should report the same request: who has `10.0.0.2`, tell `10.0.0.1`.
+You may also see IPv6 frames with `Unknown(34525)`. Ignore those for now.
+
+After the ARP reply, Linux should stop asking for `10.0.0.2` while the neighbour entry is valid.
 
 ## Layout
 
 - `src/interface/tap.rs` — open `/dev/net/tun`, read/write raw frames. No protocol parsing.
 - `src/ethernet.rs` — Ethernet II: destination MAC, source MAC, EtherType, payload.
-- `src/main.rs` — attach to `tap0` and print parsed frames.
+- `src/arp.rs` — answer "who has `10.0.0.2`?" with MiniTCP's MAC.
+- `src/main.rs` — attach to `tap0`, parse frames, send ARP replies.
