@@ -4,7 +4,8 @@ mod arp;
 mod ethernet;
 mod interface;
 
-use ethernet::EthernetFrame;
+use arp::{reply_for, OUR_MAC};
+use ethernet::{EthernetFrame, EthernetType};
 use interface::tap::TapInterface;
 
 fn main() -> std::io::Result<()> {
@@ -13,12 +14,38 @@ fn main() -> std::io::Result<()> {
 
     loop {
         let n = tap.read_frame(&mut buffer)?;
-        match EthernetFrame::parse(&buffer[..n]) {
-            Ok(frame) => println!(
-                "{} -> {} {:?}",
-                frame.source, frame.destination, frame.ethertype
-            ),
-            Err(e) => println!("bad frame ({n} bytes): {e}"),
+
+        let frame = match EthernetFrame::parse(&buffer[..n]) {
+            Ok(frame) => frame,
+            Err(e) => {
+                println!("bad ethernet frame: {e}");
+                continue;
+            }
+        };
+        
+        println!(
+            "{} -> {} {:?}",
+            frame.source,
+            frame.destination,
+            frame.ethertype
+        );
+
+        if frame.ethertype != EthernetType::Arp {
+            continue;
+        }
+
+        if let Some(arp_reply) = reply_for(frame.payload) {
+            let mut ethernet_reply = Vec::new();
+
+            EthernetFrame::write_ethernet(
+                &mut ethernet_reply,
+                frame.source,
+                OUR_MAC,
+                0x0806, // ARP type
+                &arp_reply
+            );
+
+            tap.write_frame(&ethernet_reply)?;
         }
     }
 }
