@@ -4,6 +4,7 @@ mod arp;
 mod checksum;
 mod ethernet;
 mod interface;
+mod ipv4;
 
 use arp::{reply_for, OUR_MAC};
 use ethernet::{EthernetFrame, EthernetType};
