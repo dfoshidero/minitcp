@@ -64,22 +64,15 @@ sudo chown -R netstack:netstack /workspaces/minitcp
 
 ## Bring up tap0
 
-`tap0` is not created in the image. It is a live kernel device and disappears when the container restarts. Create it by hand so you can see the route and the ARP.
+`tap0` is not created in the image. It is a live kernel device and disappears when the container restarts.
 
 ```bash
-# A TAP is a fake Ethernet cable. Linux holds one end; MiniTCP holds the other.
-# `user netstack` lets cargo run attach without being root.
-sudo ip tuntap add dev tap0 mode tap user netstack
-
-# Set Linux's address on this fake cable. /24 means "this house and its 256-address street."
-sudo ip addr add 10.0.0.1/24 dev tap0
-
-# Essentially plugging the ethernet cable in. Until it is UP, nothing can be sent.
-sudo ip link set dev tap0 up
-
-ip addr show tap0
-ip route
+# A TAP is a fake Ethernet cable. Linux holds one end - MiniTCP holds the other.
+# Inspect the script below to see its setup.
+./setup-tap.sh
 ```
+
+That creates the fake Ethernet cable, gives Linux `10.0.0.1/24` on it, and plugs it in (`UP`). `cargo run` will tell you to run this if `tap0` is missing. Safe to run more than once.
 
 `tap0` should be UP, and the routing table should include `10.0.0.0/24 dev tap0`. If this fails, check `sudo -n whoami`, `/dev/net/tun`, and that you are inside the Dev Container. Do not debug Rust until this works.
 
@@ -88,6 +81,7 @@ ip route
 Terminal 1:
 
 ```bash
+./setup-tap.sh
 cargo run
 ```
 
@@ -156,6 +150,7 @@ IPv4 notes that are easy to miss:
 
 ## Layout
 
+- `setup-tap.sh` — create and bring up `tap0` (run before `cargo run`).
 - `src/interface/tap.rs` — open `/dev/net/tun`, read/write raw frames. No protocol parsing.
 - `src/ethernet.rs` — Ethernet II: destination MAC, source MAC, EtherType, payload.
 - `src/arp.rs` — answer "who has `10.0.0.2`?" with MiniTCP's MAC.

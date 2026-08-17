@@ -9,11 +9,12 @@ if ! ip link show tap0 >/dev/null 2>&1; then
   # `user` means cargo run can attach as you, without sudo.
   sudo ip tuntap add dev tap0 mode tap user "$USER_NAME"
 fi
-
+# Set Linux's address on this fake cable. /24 sort of means "this house and its 256-address street."
 if ! ip -4 addr show dev tap0 | grep -q '10.0.0.1/24'; then
   sudo ip addr add 10.0.0.1/24 dev tap0
 fi
 
+# Essentially plugging the ethernet cable in. Until it is UP, nothing can be sent.
 sudo ip link set dev tap0 up
 ip addr show tap0
 ip route
