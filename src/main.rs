@@ -6,13 +6,37 @@ mod ethernet;
 mod interface;
 mod ipv4;
 
+use std::path::Path;
+
 use arp::{reply_for, OUR_MAC};
 use ethernet::{EthernetFrame, EthernetType};
 use interface::tap::TapInterface;
 use ipv4::{Ipv4Packet, Protocol};
 
+fn open_tap0() -> TapInterface {
+    if !Path::new("/dev/net/tun").exists() {
+        eprintln!("cannot open /dev/net/tun. Reopen this folder in the Dev Container.");
+        std::process::exit(1);
+    }
+
+    if !Path::new("/sys/class/net/tap0").exists() {
+        eprintln!("tap0 is not up yet. Create it first:");
+        eprintln!("  ./setup-tap.sh");
+        std::process::exit(1);
+    }
+
+    match TapInterface::open("tap0") {
+        Ok(tap) => tap,
+        Err(e) => {
+            eprintln!("cannot attach to tap0: {e}");
+            eprintln!("Try:  ./setup-tap.sh");
+            std::process::exit(1);
+        }
+    }
+}
+
 fn main() -> std::io::Result<()> {
-    let mut tap = TapInterface::open("tap0")?;
+    let mut tap = open_tap0();
     let mut buffer = [0u8; 2048];
 
     loop {
