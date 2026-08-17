@@ -6,6 +6,8 @@ Linux owns `10.0.0.1` on TAP interface `tap0`. MiniTCP pretends to be another ma
 
 Work inside the Dev Container. It has Rust, `/dev/net/tun`, and the privileges needed to create network interfaces.
 
+Terms used in the code are defined in [GLOSSARY.md](GLOSSARY.md).
+
 ## Where this sits (OSI)
 
 The OSI model splits networking into seven layers. Think of a letter: the paper is the message, the address form is IPv4, the envelope is Ethernet, and TAP is the fake cable that carries the envelope. MiniTCP does not replace the physical NIC. It starts at the Ethernet header and builds toward TCP.
@@ -150,6 +152,7 @@ IPv4 notes that are easy to miss:
 
 ## Layout
 
+- `GLOSSARY.md` — short definitions of terms the code uses.
 - `setup-tap.sh` — create and bring up `tap0` (run before `cargo run`).
 - `src/interface/tap.rs` — open `/dev/net/tun`, read/write raw frames. No protocol parsing.
 - `src/ethernet.rs` — Ethernet II: destination MAC, source MAC, EtherType, payload.

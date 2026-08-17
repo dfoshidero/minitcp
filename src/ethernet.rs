@@ -1,12 +1,13 @@
 // src/ethernet.rs
 
-// 6-byte link-layer address for this cable. Distinct from an IPv4 address (layer 3).
+// Address on this cable only. IPv4 (10.0.0.2) is a different address, inside the payload.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MacAddress(pub [u8; 6]);
 
 impl std::fmt::Display for MacAddress {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let b = self.0;
+        // Always two digits per byte so this matches `ip` / tcpdump (`02:00:…`, not `2:0:…`).
         write!(
             f,
             "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
@@ -15,7 +16,7 @@ impl std::fmt::Display for MacAddress {
     }
 }
 
-// EtherType (bytes 12-13) says what the payload is. 0x0800 = IPv4, 0x0806 = ARP.
+// Bytes 12-13: which parser should see the payload. main.rs matches on this.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EthernetType {
     Ipv4,
@@ -40,7 +41,7 @@ impl<'a> EthernetFrame<'a> {
 
         let destination = MacAddress(input[0..6].try_into().unwrap());
         let source = MacAddress(input[6..12].try_into().unwrap());
-        // Two bytes → one u16, high byte first: [0x08, 0x00] becomes 0x0800, not 0x0008.
+        // Same "high byte first" order ARP and IPv4 use. to_be_bytes below writes it back that way.
         let raw = u16::from_be_bytes(input[12..14].try_into().unwrap());
         let ethertype = match raw {
             0x0800 => EthernetType::Ipv4,
@@ -52,7 +53,7 @@ impl<'a> EthernetFrame<'a> {
             destination,
             source,
             ethertype,
-            payload: &input[14..],
+            payload: &input[14..], // handed to arp.rs or ipv4.rs
         })
     }
     pub fn write_ethernet(
@@ -62,7 +63,7 @@ impl<'a> EthernetFrame<'a> {
         ethertype: u16,
         payload: &[u8],
     ) {
-        // Emit exact wire bytes. A Rust struct may insert padding or use host endianness.
+        // Same layout parse() reads. A Rust struct may pad or use CPU byte order; the cable cannot.
         out.extend_from_slice(&dst.0);
         out.extend_from_slice(&src.0);
         out.extend_from_slice(&ethertype.to_be_bytes());

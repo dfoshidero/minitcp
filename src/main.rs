@@ -65,9 +65,9 @@ fn main() -> std::io::Result<()> {
 
                     EthernetFrame::write_ethernet(
                         &mut ethernet_reply,
-                        frame.source, // deliver the reply to whoever asked
+                        frame.source, // their MAC from the Ethernet header (same as ARP SHA)
                         OUR_MAC,
-                        0x0806, // EtherType ARP
+                        0x0806, // same EtherType ethernet.rs maps to Arp
                         &arp_reply,
                     );
 
@@ -79,7 +79,7 @@ fn main() -> std::io::Result<()> {
                     println!("ipv4 {} -> {} ttl={} {:?}",
                     packet.source, packet.destination, packet.ttl, packet.protocol
                 );
-                // Byte 9 of the IPv4 header: which handler should see the payload.
+                // Inner dispatch: ipv4.rs already parsed byte 9. ICMP is ping; we don't reply yet.
                 match packet.protocol {
                     Protocol::Icmp => println!("ICMP (to be implemented)"),
                     Protocol::Udp => println!("UDP (to be implemented)"),
