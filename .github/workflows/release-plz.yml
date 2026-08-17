@@ -11,6 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -50,9 +52,7 @@ jobs:
           files: ${{ steps.build.outputs.snap }}
 
       - uses: snapcore/action-publish@v1
-        if: ${{ steps.release-plz.outputs.releases_created == 'true' && secrets.SNAPCRAFT_STORE_CREDENTIALS != '' }}
-        env:
-          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        if: steps.release-plz.outputs.releases_created == 'true' && env.SNAPCRAFT_STORE_CREDENTIALS != ''
         with:
           snap: ${{ steps.build.outputs.snap }}
           release: stable
