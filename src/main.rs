@@ -9,6 +9,7 @@ mod ipv4;
 use arp::{reply_for, OUR_MAC};
 use ethernet::{EthernetFrame, EthernetType};
 use interface::tap::TapInterface;
+use ipv4::{Ipv4Packet, Protocol};
 
 fn main() -> std::io::Result<()> {
     let mut tap = TapInterface::open("tap0")?;
@@ -32,22 +33,37 @@ fn main() -> std::io::Result<()> {
             frame.ethertype
         );
 
-        if frame.ethertype != EthernetType::Arp {
-            continue;
-        }
+        match frame.ethertype{
+            EthernetType::Arp => {
+                if let Some(arp_reply) = reply_for(frame.payload) {
+                    let mut ethernet_reply = Vec::new();
 
-        if let Some(arp_reply) = reply_for(frame.payload) {
-            let mut ethernet_reply = Vec::new();
+                    EthernetFrame::write_ethernet(
+                        &mut ethernet_reply,
+                        frame.source,
+                        OUR_MAC,
+                        0x0806,
+                        &arp_reply,
+                    );
 
-            EthernetFrame::write_ethernet(
-                &mut ethernet_reply,
-                frame.source,
-                OUR_MAC,
-                0x0806, // ARP type
-                &arp_reply
-            );
-
-            tap.write_frame(&ethernet_reply)?;
+                    tap.write_frame(&ethernet_reply)?;
+                }
+            }
+            EthernetType::Ipv4 => match Ipv4Packet::parse(frame.payload) {
+                Ok(packet) => {
+                    println!("ipv4 {} -> {} ttl={} {:?}",
+                    packet.source, packet.destination, packet.ttl, packet.protocol
+                );
+                match packet.protocol {
+                    Protocol::Icmp => println!("ICMP (to be implemented)"),
+                    Protocol::Udp => println!("UDP (to be implemented)"),
+                    Protocol::Tcp => println!("TCP (to be implemented)"),
+                    Protocol::Unknown(n) => println!("unknown IP protocol {n}"),
+                }
+            }
+            Err(e) => println!("bad ipv4 packet: {e}"),
+        },
+        EthernetType::Unknown(_) => {}
         }
     }
 }
