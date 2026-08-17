@@ -1,4 +1,4 @@
-// Terminal-only UI. The MiniTCP protocol implementation lives outside this folder.
+// Terminal UI. The protocol implementation lives outside this folder.
 
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Read};
@@ -181,11 +181,14 @@ struct ChildProc {
 }
 
 impl ChildProc {
-    fn spawn_stack() -> std::io::Result<Self> {
+    fn spawn_stack(verbose: bool) -> std::io::Result<Self> {
         let exe = std::env::current_exe()?;
         let mut cmd = Command::new(exe);
-        cmd.arg("stack")
-            .stdin(Stdio::null())
+        cmd.arg("stack");
+        if !verbose {
+            cmd.arg("--quiet");
+        }
+        cmd.stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         unsafe {
@@ -357,6 +360,11 @@ struct Lab {
     dump_alive: bool,
     action_process: Option<ChildProc>,
     command_input: Option<String>,
+    verbose: bool,
+    icmp_in: u32,
+    icmp_out: u32,
+    arp_in: u32,
+    arp_out: u32,
 }
 
 fn setup_command(tx: &Sender<Msg>, program: &str, args: &[&str]) -> bool {
@@ -496,7 +504,7 @@ impl Lab {
         let (tx, rx) = mpsc::channel();
         ensure_tap0(&tx);
 
-        let mut stack = ChildProc::spawn_stack()?;
+        let mut stack = ChildProc::spawn_stack(true)?;
         attach_child(&mut stack, tx.clone(), Msg::Stack);
 
         let filter = DumpFilter::All;
@@ -519,7 +527,8 @@ impl Lab {
         let stack_alive = stack.alive();
         let dump_alive = dump.alive();
         let mut action_buf = Buffer::new();
-        action_buf.push("lab ready. Tab focuses a pane. p ping  n neigh  d dump filter.".into());
+        action_buf
+            .push("lab ready. Tab focuses a pane. p ping  n neigh  f flush  d dump filter.".into());
         if !stack_alive {
             action_buf.push("stack failed to stay up — try ./setup-tap.sh then r".into());
         }
@@ -541,16 +550,38 @@ impl Lab {
             dump_alive,
             action_process: None,
             command_input: None,
+            verbose: true,
+            icmp_in: 0,
+            icmp_out: 0,
+            arp_in: 0,
+            arp_out: 0,
         })
+    }
+
+    fn toggle_verbose(&mut self) {
+        self.verbose = !self.verbose;
+        self.restart_stack();
+        self.push_pane(
+            Pane::Stack,
+            if self.verbose {
+                "— verbose: headers decoded —".into()
+            } else {
+                "— quiet: one line per exchange —".into()
+            },
+        );
     }
 
     fn restart_stack(&mut self) {
         self.stack.kill();
-        match ChildProc::spawn_stack() {
+        match ChildProc::spawn_stack(self.verbose) {
             Ok(mut c) => {
                 attach_child(&mut c, self.tx.clone(), Msg::Stack);
                 self.stack = c;
                 self.stack_alive = true;
+                self.icmp_in = 0;
+                self.icmp_out = 0;
+                self.arp_in = 0;
+                self.arp_out = 0;
                 self.push_pane(Pane::Stack, "— stack restarted —".into());
             }
             Err(e) => self.push_pane(Pane::Actions, format!("restart stack failed: {e}")),
@@ -628,10 +659,36 @@ impl Lab {
         }
     }
 
+    fn count_stack_line(&mut self, line: &str) {
+        if line.contains("echo id=") {
+            self.icmp_in += 1;
+            self.icmp_out += 1;
+            return;
+        }
+        if line.contains("type=8 ") {
+            self.icmp_in += 1;
+        }
+        if line.contains("type=0 ") {
+            self.icmp_out += 1;
+        }
+        if line.contains("who-has") {
+            self.arp_in += 1;
+            if !line.contains('[') {
+                self.arp_out += 1;
+            }
+        }
+        if line.contains("is-at") {
+            self.arp_out += 1;
+        }
+    }
+
     fn drain_msgs(&mut self) {
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
-                Msg::Stack(s) => self.push_pane(Pane::Stack, s),
+                Msg::Stack(s) => {
+                    self.count_stack_line(&s);
+                    self.push_pane(Pane::Stack, s);
+                }
                 Msg::Dump(s) => self.push_pane(Pane::Dump, s),
                 Msg::Action(s) => self.push_pane(Pane::Actions, s),
             }
@@ -730,6 +787,7 @@ impl Lab {
                 });
             }
             KeyCode::Char('r') => self.restart_stack(),
+            KeyCode::Char('v') => self.toggle_verbose(),
             KeyCode::Char('t') => self.restart_dump(),
             KeyCode::Char('d') => self.cycle_filter(),
             KeyCode::Char('c') => self.clear_focused(),
@@ -753,21 +811,47 @@ impl Lab {
 
 fn style_line(text: &str) -> Line<'_> {
     let lower = text.to_ascii_lowercase();
-    let color = if lower.contains("error") || lower.contains("failed") || lower.contains("bad ") {
-        Color::Red
-    } else if text.starts_with("$ ") {
-        Color::Green
+    if lower.contains("error") || lower.contains("failed") || lower.contains("bad ") {
+        return Line::from(Span::styled(
+            text.to_string(),
+            Style::default().fg(Color::Red),
+        ));
+    }
+    if text.starts_with("$ ") {
+        return Line::from(Span::styled(
+            text.to_string(),
+            Style::default().fg(Color::Green),
+        ));
+    }
+    for (tag, color) in [
+        ("[DROP]", Color::Red),
+        ("[OUT]", Color::Green),
+        ("[IN]", Color::Cyan),
+        ("[..]", Color::DarkGray),
+    ] {
+        if let Some(at) = text.find(tag) {
+            let gray = Style::default().fg(Color::Gray);
+            return Line::from(vec![
+                Span::styled(text[..at].to_string(), gray),
+                Span::styled(
+                    tag.to_string(),
+                    Style::default().fg(color).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(text[at + tag.len()..].to_string(), gray),
+            ]);
+        }
+    }
+    let color = if lower.contains("icmp") || lower.contains(" echo ") {
+        Color::Cyan
     } else if lower.contains("arp") {
         Color::Yellow
-    } else if lower.contains("ipv4") || lower.contains("icmp") || lower.contains(" ip ") {
-        Color::Cyan
     } else {
         Color::Gray
     };
     Line::from(Span::styled(text.to_string(), Style::default().fg(color)))
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum PaneRole {
     MiniTcpCore,
     ExternalTool,
@@ -852,6 +936,19 @@ fn draw(frame: &mut Frame, lab: &mut Lab) {
                 Color::Red
             }),
         ),
+        Span::raw("  log:"),
+        Span::styled(
+            if lab.verbose { "verbose" } else { "quiet" },
+            Style::default().fg(if lab.verbose {
+                Color::Cyan
+            } else {
+                Color::Gray
+            }),
+        ),
+        Span::raw(format!(
+            "  icmp {}/{}  arp {}/{}",
+            lab.icmp_in, lab.icmp_out, lab.arp_in, lab.arp_out
+        )),
         Span::raw("  Capture:"),
         Span::styled(
             format!("{}:{}", dump_st, lab.filter.label()),
@@ -869,7 +966,7 @@ fn draw(frame: &mut Frame, lab: &mut Lab) {
 
     let top = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .constraints([Constraint::Percentage(62), Constraint::Percentage(38)])
         .split(layout[1]);
     let stack_focused = lab.focus == Pane::Stack;
     let dump_focused = lab.focus == Pane::Dump;
@@ -923,7 +1020,9 @@ fn draw(frame: &mut Frame, lab: &mut Lab) {
             key(":", "command"),
             key("p", "ping"),
             key("n", "neigh"),
+            key("f", "flush"),
             key("d", "filter"),
+            key("v", if lab.verbose { "quiet" } else { "verbose" }),
             key("q", "quit"),
         ]),
     };
@@ -950,9 +1049,10 @@ fn render_term(
     } else {
         format!("{title} · PAUSED")
     };
-    let widget = Paragraph::new(lines)
-        .block(pane_block(title, focused, role))
-        .wrap(Wrap { trim: false });
+    let mut widget = Paragraph::new(lines).block(pane_block(title, focused, role));
+    if role != PaneRole::MiniTcpCore {
+        widget = widget.wrap(Wrap { trim: false });
+    }
     frame.render_widget(widget, area);
 }
 
