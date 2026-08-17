@@ -1,7 +1,10 @@
 [workspace]
 publish = false
+git_tag_enable = true
+git_release_enable = true
 
 [[package]]
 name = "minitcp"
 publish = false
+release = true
 git_tag_name = "v{{ version }}"
