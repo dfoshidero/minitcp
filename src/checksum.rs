@@ -1,22 +1,28 @@
 // src/checksum.rs
 
+/// RFC 1071: add 16-bit big-endian words, fold the carry, then ones-complement.
+/// A valid IPv4 header (checksum field included) checksums to 0.
 pub fn internet_checksum(bytes: &[u8]) -> u16 {
     let mut sum: u32 = 0;
     let mut chunks = bytes.chunks_exact(2);
 
     for chunk in &mut chunks {
+        // Widen to u32 so the running total can hold carry past 16 bits.
         sum += u16::from_be_bytes([chunk[0], chunk[1]]) as u32;
     }
 
     if let [last] = chunks.remainder() {
+        // Odd leftover byte is the high half of a word: 0xAB → 0xAB00, not 0x00AB.
         sum += (*last as u32) << 8;
     }
 
     while (sum >> 16) != 0 {
+        // >> 16 = bits that overflowed 16-bit addition; & 0xFFFF = the low 16 bits.
+        // Adding them back is "end-around carry."
         sum = (sum & 0xFFFF) + (sum >> 16);
     }
 
-    !sum as u16
+    !sum as u16 // ones-complement of the folded 16-bit sum
 }
 
 #[cfg(test)]

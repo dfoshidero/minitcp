@@ -37,6 +37,7 @@ fn open_tap0() -> TapInterface {
 
 fn main() -> std::io::Result<()> {
     let mut tap = open_tap0();
+    // Comfortably larger than a typical 1500-byte Ethernet MTU plus headers.
     let mut buffer = [0u8; 2048];
 
     loop {
@@ -64,9 +65,9 @@ fn main() -> std::io::Result<()> {
 
                     EthernetFrame::write_ethernet(
                         &mut ethernet_reply,
-                        frame.source,
+                        frame.source, // deliver the reply to whoever asked
                         OUR_MAC,
-                        0x0806,
+                        0x0806, // EtherType ARP
                         &arp_reply,
                     );
 
@@ -78,6 +79,7 @@ fn main() -> std::io::Result<()> {
                     println!("ipv4 {} -> {} ttl={} {:?}",
                     packet.source, packet.destination, packet.ttl, packet.protocol
                 );
+                // Byte 9 of the IPv4 header: which handler should see the payload.
                 match packet.protocol {
                     Protocol::Icmp => println!("ICMP (to be implemented)"),
                     Protocol::Udp => println!("UDP (to be implemented)"),

@@ -5,8 +5,9 @@ use std::net::Ipv4Addr;
 use crate::checksum::internet_checksum;
 
 const MINIMUM_IPV4_HEADER_SIZE: usize = 20;
-const MORE_FRAGMENTS: u16 = 0x2000;
-const FRAGMENT_OFFSET: u16 = 0x1FFF;
+// Bytes 6-7 pack 3 flag bits + a 13-bit fragment offset.
+const MORE_FRAGMENTS: u16 = 0x2000; // bit 13: more pieces follow
+const FRAGMENT_OFFSET: u16 = 0x1FFF; // low 13 bits: where this piece starts
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Protocol {
@@ -18,6 +19,7 @@ pub enum Protocol {
 
 impl Protocol {
     pub fn from_number(n: u8) -> Self {
+        // IANA protocol numbers in byte 9. 1 ICMP, 6 TCP, 17 UDP.
         match n {
             1 => Self::Icmp,
             6 => Self::Tcp,
@@ -51,29 +53,35 @@ impl<'a> Ipv4Packet<'a> {
             return Err("truncated ipv4 header");
         }
 
+        // Byte 0 packs two 4-bit fields.
+        // >> 4 moves the high nibble down → version. & 0x0F keeps the low nibble → IHL.
         let version = input[0] >> 4;
+        // IHL is in 32-bit words; * 4 converts to bytes. 5 → 20, the header with no options.
         let ihl_bytes = ((input[0] & 0x0F) as usize) * 4;
 
         if version != 4 || ihl_bytes < MINIMUM_IPV4_HEADER_SIZE || input.len() < ihl_bytes {
             return Err("invalid ipv4 header");
         }
 
+        // [2..4] Total Length = header + payload. Ethernet may pad, so do not use input.len().
         let total_length = u16::from_be_bytes([input[2], input[3]]) as usize;
         if total_length < ihl_bytes || total_length > input.len() {
             return Err("invalid ipv4 total length");
         }
 
         let frag = u16::from_be_bytes([input[6], input[7]]);
+        // & isolates each part of the packed field. Either set means a split packet; v1 drops it.
         if (frag & FRAGMENT_OFFSET) !=0 || (frag & MORE_FRAGMENTS) !=0{
             return Err("ipv4 fragmentation unsupported");
         }
 
+        // Checksum covers the header, including bytes 10-11. A correct header sums to 0.
         if internet_checksum(&input[..ihl_bytes]) != 0 {
             return Err("bad ipv4 checksum");
         }
 
         Ok(Self {
-            ttl: input[8],
+            ttl: input[8], // hops remaining; routers decrement this
             protocol: Protocol::from_number(input[9]),
             source: Ipv4Addr::new(input[12], input[13], input[14], input[15]),
             destination: Ipv4Addr::new(input[16], input[17], input[18], input[19]),
@@ -93,16 +101,16 @@ impl<'a> Ipv4Packet<'a> {
         let total_length =(MINIMUM_IPV4_HEADER_SIZE + payload.len()) as u16;
         let header_start = out.len();
 
-        out.push((4 << 4) | 5); // version 4, IHL 5 (20 bytes)
-        out.push(0); // DSCP/ECN
-        out.extend_from_slice(&total_length.to_be_bytes()); // total length
+        out.push((4 << 4) | 5); // high nibble version=4, low nibble IHL=5 → byte 0x45
+        out.push(0); // DSCP/ECN, unused here
+        out.extend_from_slice(&total_length.to_be_bytes());
         out.extend_from_slice(&0u16.to_be_bytes()); // identification
-        out.extend_from_slice(&0u16.to_be_bytes()); // flags and fragment offset
-        out.push(ttl); // TTL
-        out.push(protocol.number()); // protocol
-        out.extend_from_slice(&0u16.to_be_bytes()); // checksum (placeholder)
-        out.extend_from_slice(&source.octets()); // source address
-        out.extend_from_slice(&destination.octets()); // destination address
+        out.extend_from_slice(&0u16.to_be_bytes()); // flags + fragment offset
+        out.push(ttl);
+        out.push(protocol.number());
+        out.extend_from_slice(&0u16.to_be_bytes()); // checksum field must be 0 while we compute it
+        out.extend_from_slice(&source.octets());
+        out.extend_from_slice(&destination.octets());
         out.extend_from_slice(payload);
 
         let checksum = internet_checksum(&out[header_start..header_start+MINIMUM_IPV4_HEADER_SIZE]);

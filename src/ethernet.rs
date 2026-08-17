@@ -1,5 +1,6 @@
 // src/ethernet.rs
 
+// 6-byte link-layer address for this cable. Distinct from an IPv4 address (layer 3).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MacAddress(pub [u8; 6]);
 
@@ -14,6 +15,7 @@ impl std::fmt::Display for MacAddress {
     }
 }
 
+// EtherType (bytes 12-13) says what the payload is. 0x0800 = IPv4, 0x0806 = ARP.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EthernetType {
     Ipv4,
@@ -31,12 +33,14 @@ pub struct EthernetFrame<'a> {
 
 impl<'a> EthernetFrame<'a> {
     pub fn parse(input: &'a [u8]) -> Result<Self, &'static str> {
+        // Ethernet II header is 14 bytes: dst MAC [0..6], src MAC [6..12], EtherType [12..14].
         if input.len() < 14 {
             return Err("truncated ethernet frame");
         }
 
         let destination = MacAddress(input[0..6].try_into().unwrap());
         let source = MacAddress(input[6..12].try_into().unwrap());
+        // Two bytes → one u16, high byte first: [0x08, 0x00] becomes 0x0800, not 0x0008.
         let raw = u16::from_be_bytes(input[12..14].try_into().unwrap());
         let ethertype = match raw {
             0x0800 => EthernetType::Ipv4,
@@ -58,6 +62,7 @@ impl<'a> EthernetFrame<'a> {
         ethertype: u16,
         payload: &[u8],
     ) {
+        // Emit exact wire bytes. A Rust struct may insert padding or use host endianness.
         out.extend_from_slice(&dst.0);
         out.extend_from_slice(&src.0);
         out.extend_from_slice(&ethertype.to_be_bytes());
