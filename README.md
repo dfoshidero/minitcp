@@ -8,6 +8,12 @@ Work inside the Dev Container. It has Rust, `/dev/net/tun`, and the privileges n
 
 Terms used in the code are defined in [GLOSSARY.md](GLOSSARY.md).
 
+The Dev Container installs the `minitcp` command automatically. Run it to open the terminal lab:
+
+```bash
+minitcp
+```
+
 ## Where this sits (OSI)
 
 The OSI model splits networking into seven layers. Think of a letter: the paper is the message, the address form is IPv4, the envelope is Ethernet, and TAP is the fake cable that carries the envelope. MiniTCP does not replace the physical NIC. It starts at the Ethernet header and builds toward TCP.
@@ -66,7 +72,7 @@ sudo chown -R netstack:netstack /workspaces/minitcp
 
 ## Bring up tap0
 
-`tap0` is not created in the image. It is a live kernel device and disappears when the container restarts.
+`tap0` is a live kernel device and disappears when the container restarts. The `minitcp` lab creates and configures it automatically. For the manual workflow, run:
 
 ```bash
 # A TAP is a fake Ethernet cable. Linux holds one end - MiniTCP holds the other.
@@ -74,17 +80,58 @@ sudo chown -R netstack:netstack /workspaces/minitcp
 ./setup-tap.sh
 ```
 
-That creates the fake Ethernet cable, gives Linux `10.0.0.1/24` on it, and plugs it in (`UP`). `cargo run` will tell you to run this if `tap0` is missing. Safe to run more than once.
+That creates the fake Ethernet cable, gives Linux `10.0.0.1/24` on it, and plugs it in (`UP`). It is safe to run more than once.
 
 `tap0` should be UP, and the routing table should include `10.0.0.0/24 dev tap0`. If this fails, check `sudo -n whoami`, `/dev/net/tun`, and that you are inside the Dev Container. Do not debug Rust until this works.
 
 ## Run MiniTCP
 
+Open the full lab:
+
+```bash
+minitcp
+# or, while developing:
+cargo run
+```
+
+The screen contains three independent terminal-style panes. The blue **MiniTCP Core** pane is the stack itself; the dark external panes are commands that observe or interact with it:
+
+- **MiniTCP Core** — MiniTCP's incoming Ethernet/ARP/IPv4 logs.
+- **TAP Capture** — `tcpdump` watching live traffic on the virtual cable.
+- **External Tools** — output from ping, neighbour-table commands, and commands you type.
+
+| Key | Action |
+| --- | --- |
+| `Tab` | Focus the next pane |
+| `1` / `2` / `3` | Focus stack / packets / actions directly |
+| `↑` / `↓` | Scroll the focused pane one line |
+| `PageUp` / `PageDown` | Scroll the focused pane one page |
+| `a` or `End` | Toggle/resume live output for the focused pane |
+| `:` | Type a shell command; `Enter` runs it and `Esc` cancels |
+| `p` | Ping `10.0.0.2` while stack and tcpdump keep running |
+| `n` | Show `ip neigh` |
+| `f` | Flush the neighbour table |
+| `d` | Cycle tcpdump through all / ARP / IP |
+| `c` | Clear the focused pane |
+| `r` | Restart the stack |
+| `t` | Restart tcpdump |
+| `q` | Stop child processes and quit |
+
+Typed commands run non-interactively in the actions pane. This is useful for commands such as `ip addr show tap0`, `ip route`, or `uname -a`; full-screen interactive programs should still be opened in a separate terminal.
+
+Scrolling up pauses that focused pane, which is marked `PAUSED`. Reaching the bottom, pressing `End`, or enabling live output with `a` resumes trailing output. If new data arrives while a pane is unfocused, that pane automatically returns to its newest line.
+
+Ping still reports packet loss. That is expected: MiniTCP can see the IPv4/ICMP packet but does not send an echo reply yet.
+
+### Manual three-terminal workflow
+
+Use this if you want to inspect each command without the lab.
+
 Terminal 1:
 
 ```bash
 ./setup-tap.sh
-cargo run
+minitcp stack
 ```
 
 Terminal 2:
@@ -119,9 +166,34 @@ Parser tests (no TAP required):
 cargo test
 ```
 
+## Install outside the Dev Container
+
+MiniTCP requires Linux because TAP is a Linux kernel device. On macOS or Windows, use a Linux Docker container rather than installing a native binary.
+
+On Linux with Rust installed:
+
+```bash
+cargo install --git <repository-url>
+minitcp
+```
+
+The host also needs `/dev/net/tun`, `ip`, `ping`, `tcpdump`, and permission to create network interfaces.
+
+For a packaged container image, run it with the network capabilities and TAP device exposed:
+
+```bash
+docker run --rm -it \
+  --cap-add=NET_ADMIN \
+  --cap-add=NET_RAW \
+  --device=/dev/net/tun \
+  <minitcp-image>
+```
+
+A published image and prebuilt GitHub Release binaries can be added later. The current supported download/install paths are the Dev Container and `cargo install` on Linux.
+
 ## What you should see
 
-`cargo run` prints each Ethernet frame, then IPv4 details when the EtherType is IPv4:
+The `minitcp stack` pane (or the standalone command) prints each Ethernet frame, then IPv4 details when the EtherType is IPv4:
 
 ```
 02:00:00:00:00:01 -> ff:ff:ff:ff:ff:ff Arp
@@ -153,10 +225,12 @@ IPv4 notes that are easy to miss:
 ## Layout
 
 - `GLOSSARY.md` — short definitions of terms the code uses.
-- `setup-tap.sh` — create and bring up `tap0` (run before `cargo run`).
+- `setup-tap.sh` — manually create and bring up `tap0`; the lab does this automatically.
+- `src/frontend/mod.rs` — isolated terminal frontend: split panes, child processes, key actions, and scrollback.
+- `src/stack.rs` — the raw TAP protocol loop used by `minitcp stack`.
 - `src/interface/tap.rs` — open `/dev/net/tun`, read/write raw frames. No protocol parsing.
 - `src/ethernet.rs` — Ethernet II: destination MAC, source MAC, EtherType, payload.
 - `src/arp.rs` — answer "who has `10.0.0.2`?" with MiniTCP's MAC.
 - `src/checksum.rs` — Internet checksum (one's complement). IPv4 uses it now; TCP/UDP will later.
 - `src/ipv4.rs` — parse/validate a 20-byte IPv4 header, reject fragments, serialize one back.
-- `src/main.rs` — attach to `tap0`, reply to ARP, print IPv4 protocol.
+- `src/main.rs` — command dispatcher: terminal lab by default, raw stack with `stack`.
