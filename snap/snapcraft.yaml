@@ -1,0 +1,26 @@
+name: minitcp
+base: core24
+adopt-info: minitcp
+summary: Userspace TCP/IP stack
+description: |
+  MiniTCP is a small userspace TCP/IP stack that attaches to a TAP interface.
+  Linux owns one end of tap0; MiniTCP is the machine on the other side.
+grade: stable
+confinement: strict
+
+apps:
+  minitcp:
+    command: bin/minitcp
+    plugs:
+      - network
+      - network-bind
+      - network-control
+
+parts:
+  minitcp:
+    plugin: rust
+    source: .
+    rust-channel: stable
+    override-build: |
+      craftctl default
+      craftctl set version="$(sed -n 's/^version = "\(.*\)"/\1/p' "$CRAFT_PART_SRC/Cargo.toml" | head -n1)"

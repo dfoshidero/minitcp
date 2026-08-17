@@ -177,14 +177,22 @@ cargo test
 
 MiniTCP requires Linux because TAP is a Linux kernel device. On macOS or Windows, use a Linux Docker container rather than installing a native binary.
 
-On Linux with Rust installed:
+```bash
+sudo snap install minitcp
+```
+
+`snap install minitcp` works if your user can talk to snapd without sudo. Create `tap0` on the host (`./setup-tap.sh` or the lab). The snap attaches to that interface; it does not create it.
+
+The host also needs `/dev/net/tun`, `ip`, `ping`, `tcpdump`, and permission to create network interfaces.
+
+To build from source instead:
 
 ```bash
 cargo install --git <repository-url>
 minitcp
 ```
 
-The host also needs `/dev/net/tun`, `ip`, `ping`, `tcpdump`, and permission to create network interfaces.
+Releases are cut from conventional commits on `main` (`feat:`, `fix:`, `docs:`). A bot opens a release PR that bumps `Cargo.toml`. Merge that PR and CI tags `vX.Y.Z`, attaches the snap to the GitHub Release, and publishes to the Snap Store.
 
 For a packaged container image, run it with the network capabilities and TAP device exposed:
 
@@ -195,8 +203,6 @@ docker run --rm -it \
   --device=/dev/net/tun \
   <minitcp-image>
 ```
-
-A published image and prebuilt GitHub Release binaries can be added later. The current supported download/install paths are the Dev Container and `cargo install` on Linux.
 
 ## What you should see
 

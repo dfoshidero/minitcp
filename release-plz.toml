@@ -1,0 +1,7 @@
+[workspace]
+publish = false
+
+[[package]]
+name = "minitcp"
+publish = false
+git_tag_name = "v{{ version }}"
