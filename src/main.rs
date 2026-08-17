@@ -1,6 +1,7 @@
 // src/main.rs
 
 mod arp;
+mod checksum;
 mod ethernet;
 mod interface;
 
