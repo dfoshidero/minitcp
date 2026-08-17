@@ -36,7 +36,7 @@ Short meanings for words MiniTCP uses. Comments in the code show *where* we appl
 
 **IPv4** — Layer-3 letter with source/dest IPs. MiniTCP parses it and names the protocol inside. It does not route or fragment.
 
-**ICMP** — Protocol number 1. Ping is ICMP echo. We detect it; we do not answer yet.
+**ICMP** — Protocol number 1, carried inside IPv4. Ping is Echo Request (type 8); MiniTCP answers with Echo Reply (type 0).
 
 **TCP** — Protocol number 6. Reliable streams. Later.
 

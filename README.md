@@ -23,13 +23,13 @@ The OSI model splits networking into seven layers. Think of a letter: the paper 
 | 7 | Application | HTTP, DNS, ping's user-facing side | later |
 | 6–5 | Presentation / Session | encoding, connections as apps see them | skip; TCP/IP folds these into 7 and 4 |
 | 4 | Transport | TCP / UDP ports and reliability | later |
-| 3 | Network | IPv4 addresses and routing | **here** — parse IPv4, name ICMP/UDP/TCP |
+| 3 | Network | IPv4 addresses and routing | **here** — parse IPv4, answer ICMP echo (ping) |
 | 2 | Data link | Ethernet MACs, ARP ("who has this IP?") | Ethernet + ARP reply |
 | 1 | Physical | bits on a wire | Linux TAP — a virtual Ethernet cable |
 
 TAP is Layer 2: the program reads and writes whole Ethernet frames. TUN would be Layer 3 (raw IP). MiniTCP uses TAP so Ethernet and ARP stay in userspace.
 
-When you `ping 10.0.0.2`, Linux first needs a MAC for that IP, so it broadcasts ARP on `tap0`. MiniTCP answers: `10.0.0.2` is at `02:00:00:00:00:02`. Linux then sends an IPv4 packet (usually ICMP echo). MiniTCP parses that header and prints the protocol. Ping still fails: MiniTCP does not answer ICMP yet.
+When you `ping 10.0.0.2`, Linux first needs a MAC for that IP, so it broadcasts ARP on `tap0`. MiniTCP answers: `10.0.0.2` is at `02:00:00:00:00:02`. Linux then sends an ICMP Echo Request (type 8). MiniTCP replies with Echo Reply (type 0), wrapped in IPv4 and Ethernet.
 
 ```
 ping 10.0.0.2
@@ -90,13 +90,21 @@ Open the full lab:
 
 ```bash
 minitcp
-# or, while developing:
+# or, while developing (always builds current source):
 cargo run
 ```
 
+The Dev Container installs `minitcp` once when the container is created. After you change the code, either use `cargo run` or reinstall the command:
+
+```bash
+cargo install --path .
+```
+
+`minitcp` on your PATH is that installed binary. Restarting the lab with `r` does not rebuild it.
+
 The screen contains three independent terminal-style panes. The blue **MiniTCP Core** pane is the stack itself; the dark external panes are commands that observe or interact with it:
 
-- **MiniTCP Core** — MiniTCP's incoming Ethernet/ARP/IPv4 logs.
+- **MiniTCP Core** — MiniTCP's protocol log (`IN` / `OUT` / `DROP`). Press `v` for one line per exchange.
 - **TAP Capture** — `tcpdump` watching live traffic on the virtual cable.
 - **External Tools** — output from ping, neighbour-table commands, and commands you type.
 
@@ -112,6 +120,7 @@ The screen contains three independent terminal-style panes. The blue **MiniTCP C
 | `n` | Show `ip neigh` |
 | `f` | Flush the neighbour table |
 | `d` | Cycle tcpdump through all / ARP / IP |
+| `v` | Toggle quiet one-liners (restarts the stack) |
 | `c` | Clear the focused pane |
 | `r` | Restart the stack |
 | `t` | Restart tcpdump |
@@ -121,7 +130,7 @@ Typed commands run non-interactively in the actions pane. This is useful for com
 
 Scrolling up pauses that focused pane, which is marked `PAUSED`. Reaching the bottom, pressing `End`, or enabling live output with `a` resumes trailing output. If new data arrives while a pane is unfocused, that pane automatically returns to its newest line.
 
-Ping still reports packet loss. That is expected: MiniTCP can see the IPv4/ICMP packet but does not send an echo reply yet.
+Press `p` to ping `10.0.0.2`. You should see replies from MiniTCP (`64 bytes from 10.0.0.2`).
 
 ### Manual three-terminal workflow
 
@@ -140,25 +149,23 @@ Terminal 2:
 # Forget any old MAC address for 10.0.0.2 so Linux asks ARP again.
 sudo ip neigh flush dev tap0
 
-# One ping, give up after 1 second. It will fail: we read ICMP but do not reply yet.
+# One ping. MiniTCP should answer.
 ping -c 1 -W 1 10.0.0.2
 
 # Neighbour table, essentially = "phone book of IP to MAC on this cable."
 ip neigh show dev tap0
 ```
 
-Ping will still fail. That is expected: Linux now knows the MAC, and MiniTCP can see the IPv4/ICMP packet, but it does not send an echo reply.
+`ping` should print `64 bytes from 10.0.0.2`. `ip neigh show dev tap0` should contain `10.0.0.2` at `02:00:00:00:00:02`.
 
-`ip neigh show dev tap0` should contain `10.0.0.2` at `02:00:00:00:00:02`.
-
-Optional: watch ARP, then IPv4, on the wire.
+Watch ARP, then ICMP, on the wire:
 
 ```bash
 sudo tcpdump -eni tap0 arp
-sudo tcpdump -eni tap0 ip
+sudo tcpdump -eni tap0 icmp
 ```
 
-You should see Linux ask "who has `10.0.0.2`, tell `10.0.0.1`" and MiniTCP reply "`10.0.0.2` is at `02:00:00:00:00:02`". After that, tcpdump should show an IPv4 packet from `10.0.0.1` to `10.0.0.2` (ICMP echo). MiniTCP does not generate IPv4 on the wire yet, so there is no echo reply to inspect.
+You should see Linux ask "who has `10.0.0.2`, tell `10.0.0.1`" and MiniTCP reply "`10.0.0.2` is at `02:00:00:00:00:02`". Then an ICMP echo request `10.0.0.1 > 10.0.0.2` and MiniTCP's echo reply `10.0.0.2 > 10.0.0.1` with the same identifier and sequence.
 
 Parser tests (no TAP required):
 
@@ -193,25 +200,37 @@ A published image and prebuilt GitHub Release binaries can be added later. The c
 
 ## What you should see
 
-The `minitcp stack` pane (or the standalone command) prints each Ethernet frame, then IPv4 details when the EtherType is IPv4:
+Verbose is the default: it peels Ethernet / IPv4 / ICMP. Press `v`, or run `minitcp stack -q`, for one line per exchange. TCP and UDP are not decoded yet.
+
+A successful `ping 10.0.0.2` looks like this:
 
 ```
-02:00:00:00:00:01 -> ff:ff:ff:ff:ff:ff Arp
-02:00:00:00:00:01 -> 02:00:00:00:00:02 Ipv4
-ipv4 10.0.0.1 -> 10.0.0.2 ttl=64 Icmp
-ICMP (to be implemented)
+23:12:05  [IN]    ethernet  L2  02:00:00:00:00:01 -> 02:00:00:00:00:02  ethertype 0x0800
+          [..]    ipv4      L3  10.0.0.1 -> 10.0.0.2  ttl=64 proto=icmp payload=64
+          [..]    └── icmp  L3  type=8 code=0 id=1 seq=1  len=64
+          [OUT]   ethernet  L2  02:00:00:00:00:02 -> 02:00:00:00:00:01  ethertype 0x0800
+          [..]    ipv4      L3  10.0.0.2 -> 10.0.0.1  ttl=64 proto=icmp payload=64
+          [..]    └── icmp  L3  type=0 code=0 id=1 seq=1  len=64
+```
+
+Quiet (`v` or `minitcp stack -q`) is one line per exchange:
+
+```
+23:12:05  arp  10.0.0.1 -> 10.0.0.2  who-has
+23:12:05  icmp  10.0.0.1 -> 10.0.0.2  echo id=1 seq=1  len=64
 ```
 
 | Field | Meaning |
 | --- | --- |
-| left MAC | Linux's MAC on `tap0` |
-| `ff:ff:ff:ff:ff:ff` | shout to everyone on the cable (ARP who-has) |
-| `Arp` | EtherType `0x0806` — "this envelope is an ARP note" |
-| `Ipv4` | EtherType `0x0800` — "this envelope has an IPv4 letter" |
-| `ttl=64` | lives left; each hop subtracts 1 |
-| `Icmp` | protocol 1, the ping message inside IPv4 |
+| time | `HH:MM:SS` on the first line of the event |
+| `[IN]` / `[OUT]` / `[DROP]` | verbose: accepted, replied, or ignored |
+| `[..]` | verbose continuation; `└──` is the IPv4 payload |
+| `echo id=` | quiet ping; request and reply as one line |
+| `who-has` | quiet ARP; MAC is in verbose |
+| `id` / `seq` | ping identifier and sequence |
+| `len=` | ICMP message size |
 
-You may also see IPv6 frames with `Unknown(34525)`. Ignore those for now.
+IPv6 is hidden in quiet mode. UDP and TCP currently log `[DROP]  …  not implemented`.
 
 After the ARP reply, Linux should stop asking for `10.0.0.2` while the neighbour entry is valid, and the next frame should be IPv4.
 
@@ -226,11 +245,14 @@ IPv4 notes that are easy to miss:
 
 - `GLOSSARY.md` — short definitions of terms the code uses.
 - `setup-tap.sh` — manually create and bring up `tap0`; the lab does this automatically.
-- `src/frontend/mod.rs` — isolated terminal frontend: split panes, child processes, key actions, and scrollback.
-- `src/stack.rs` — the raw TAP protocol loop used by `minitcp stack`.
-- `src/interface/tap.rs` — open `/dev/net/tun`, read/write raw frames. No protocol parsing.
-- `src/ethernet.rs` — Ethernet II: destination MAC, source MAC, EtherType, payload.
-- `src/arp.rs` — answer "who has `10.0.0.2`?" with MiniTCP's MAC.
-- `src/checksum.rs` — Internet checksum (one's complement). IPv4 uses it now; TCP/UDP will later.
-- `src/ipv4.rs` — parse/validate a 20-byte IPv4 header, reject fragments, serialize one back.
 - `src/main.rs` — command dispatcher: terminal lab by default, raw stack with `stack`.
+- `src/stack.rs` — TAP loop: read a frame, dispatch to a protocol, write a reply.
+- `src/log.rs` — quiet one-liner, or verbose `[IN]` / `[OUT]` / `[..]` peel.
+- `src/tui/` — terminal UI: split panes, child processes, key actions, and scrollback.
+- `src/interface/tap.rs` — open `/dev/net/tun`, read/write raw frames. No protocol parsing.
+- `src/proto/` — wire formats MiniTCP speaks:
+  - `ethernet.rs` — Ethernet II: destination MAC, source MAC, EtherType, payload.
+  - `arp.rs` — answer "who has `10.0.0.2`?" with MiniTCP's MAC.
+  - `ipv4.rs` — parse/validate a 20-byte IPv4 header, reject fragments, serialize one back.
+  - `icmp.rs` — turn ICMP Echo Request (type 8) into Echo Reply (type 0).
+  - `checksum.rs` — Internet checksum (one's complement). IPv4 uses it now; TCP/UDP will later.
