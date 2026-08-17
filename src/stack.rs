@@ -3,10 +3,10 @@
 use std::io::Write;
 use std::path::Path;
 
-use crate::arp::{OUR_MAC, reply_for};
-use crate::ethernet::{EthernetFrame, EthernetType};
 use crate::interface::tap::TapInterface;
-use crate::ipv4::{Ipv4Packet, Protocol};
+use crate::proto::arp::{reply_for, OUR_MAC};
+use crate::proto::ethernet::{EthernetFrame, EthernetType};
+use crate::proto::ipv4::{Ipv4Packet, Protocol};
 
 fn open_tap0() -> TapInterface {
     if !Path::new("/dev/net/tun").exists() {

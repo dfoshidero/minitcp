@@ -1,8 +1,8 @@
-// src/ipv4.rs
+// src/proto/ipv4.rs
 
 use std::net::Ipv4Addr;
 
-use crate::checksum::internet_checksum;
+use super::checksum::internet_checksum;
 
 const MINIMUM_IPV4_HEADER_SIZE: usize = 20;
 // Bytes 6-7 hold two facts at once: "are more pieces coming?" and "where does this piece start?"
@@ -180,7 +180,7 @@ mod tests {
         let mut mf = PING;
         mf[6..8].copy_from_slice(&0x2000u16.to_be_bytes()); // More Fragments
         mf[10..12].copy_from_slice(&[0, 0]);
-        let csum = crate::checksum::internet_checksum(&mf[..20]);
+        let csum = internet_checksum(&mf[..20]);
         mf[10..12].copy_from_slice(&csum.to_be_bytes());
         assert_eq!(
             Ipv4Packet::parse(&mf).err(),
@@ -189,7 +189,7 @@ mod tests {
         let mut offset = PING;
         offset[6..8].copy_from_slice(&0x0001u16.to_be_bytes());
         offset[10..12].copy_from_slice(&[0, 0]);
-        let csum = crate::checksum::internet_checksum(&offset[..20]);
+        let csum = internet_checksum(&offset[..20]);
         offset[10..12].copy_from_slice(&csum.to_be_bytes());
         assert_eq!(
             Ipv4Packet::parse(&offset).err(),

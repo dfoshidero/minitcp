@@ -1,4 +1,4 @@
-// src/ethernet.rs
+// src/proto/ethernet.rs
 
 // Address on this cable only. IPv4 (10.0.0.2) is a different address, inside the payload.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -16,7 +16,7 @@ impl std::fmt::Display for MacAddress {
     }
 }
 
-// Bytes 12-13: which parser should see the payload. main.rs matches on this.
+// Bytes 12-13: which parser should see the payload. stack.rs matches on this.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EthernetType {
     Ipv4,

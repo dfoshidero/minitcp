@@ -1,6 +1,6 @@
-// src/arp.rs
+// src/proto/arp.rs
 
-use crate::ethernet::MacAddress;
+use super::ethernet::MacAddress;
 
 // We invented this MAC. The leading 02 marks it as "not from a real NIC (Network Interface Card) factory."
 pub const OUR_MAC: MacAddress =

@@ -1,4 +1,4 @@
-// src/checksum.rs
+// src/proto/checksum.rs
 
 /// Internet checksum (RFC 1071). IPv4 uses this on the header; TCP/UDP will reuse it later.
 /// Parse checks "checksum of the header, including the checksum field, is 0."

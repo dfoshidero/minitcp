@@ -16,7 +16,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
 use ratatui::{DefaultTerminal, Frame};
 
-use crate::arp::OUR_IP;
+use crate::proto::arp::OUR_IP;
 
 const MAX_LINES: usize = 2000;
 const LINUX_IP: &str = "10.0.0.1";

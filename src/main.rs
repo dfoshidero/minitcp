@@ -1,11 +1,8 @@
 // src/main.rs
 
-mod arp;
-mod checksum;
-mod ethernet;
-mod interface;
-mod ipv4;
 mod frontend;
+mod interface;
+mod proto;
 mod stack;
 
 fn usage() {
