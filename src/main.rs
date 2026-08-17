@@ -1,6 +1,6 @@
 // src/main.rs
 
-mod frontend;
+mod tui;
 mod interface;
 mod proto;
 mod stack;
@@ -19,7 +19,7 @@ fn usage() {
 fn main() -> std::io::Result<()> {
     let arg = std::env::args().nth(1);
     match arg.as_deref() {
-        None | Some("run") => frontend::run_lab(),
+        None | Some("run") => tui::run_lab(),
         Some("stack") => stack::run_stack(),
         Some("-h" | "--help" | "help") => {
             usage();
