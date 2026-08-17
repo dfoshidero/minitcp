@@ -192,7 +192,7 @@ cargo install --git <repository-url>
 minitcp
 ```
 
-Releases are cut from conventional commits on `main` (`feat:`, `fix:`, `docs:`). A bot opens a release PR that bumps `Cargo.toml`. Merge that PR and CI tags `vX.Y.Z`, attaches the snap to the GitHub Release, and publishes to the Snap Store.
+Releases are cut from conventional commits on `main`. `fix:` is a patch, `feat:` is a minor, and `feat!:` / `BREAKING CHANGE:` is a major. `docs:` and `ci:` do not bump the version. A bot opens a release PR that updates `Cargo.toml`. Merge that PR and CI tags `vX.Y.Z`, attaches the snap to the GitHub Release, and publishes to the Snap Store.
 
 For a packaged container image, run it with the network capabilities and TAP device exposed:
 
