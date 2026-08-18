@@ -215,9 +215,16 @@ impl ChildProc {
             DumpFilter::Ip => " ip",
         };
         let script = format!("echo __MINITCP_DUMP_PID=$$; exec tcpdump -eni tap0 -l{filter_arg}");
-        let mut cmd = Command::new("sudo");
-        cmd.args(["-n", "sh", "-c", &script])
-            .stdin(Stdio::null())
+        let mut cmd = if running_as_snap() {
+            let mut cmd = Command::new("sh");
+            cmd.args(["-c", &script]);
+            cmd
+        } else {
+            let mut cmd = Command::new("sudo");
+            cmd.args(["-n", "sh", "-c", &script]);
+            cmd
+        };
+        cmd.stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         unsafe {
@@ -230,7 +237,7 @@ impl ChildProc {
         let command_pid = child.stdout.as_mut().and_then(read_dump_pid);
         Ok(Self {
             child: Some(child),
-            privileged: true,
+            privileged: !running_as_snap(),
             command_pid,
         })
     }
@@ -367,6 +374,26 @@ struct Lab {
     arp_out: u32,
 }
 
+fn running_as_snap() -> bool {
+    std::env::var_os("SNAP").is_some()
+}
+
+fn setup_admin(tx: &Sender<Msg>, args: &[&str]) -> bool {
+    if running_as_snap() {
+        setup_command(tx, args[0], &args[1..])
+    } else {
+        setup_command(tx, "sudo", args)
+    }
+}
+
+fn run_admin_short(tx: &Sender<Msg>, args: &[&str]) {
+    if running_as_snap() {
+        run_short(tx, args[0], &args[1..]);
+    } else {
+        run_short(tx, "sudo", args);
+    }
+}
+
 fn setup_command(tx: &Sender<Msg>, program: &str, args: &[&str]) -> bool {
     let _ = tx.send(Msg::Action(format!("$ {program} {}", args.join(" "))));
     match Command::new(program).args(args).output() {
@@ -402,9 +429,8 @@ fn ensure_tap0(tx: &Sender<Msg>) {
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "root".into());
-        if !setup_command(
+        if !setup_admin(
             tx,
-            "sudo",
             &[
                 "ip", "tuntap", "add", "dev", "tap0", "mode", "tap", "user", &user,
             ],
@@ -420,15 +446,14 @@ fn ensure_tap0(tx: &Sender<Msg>) {
         .map(|o| String::from_utf8_lossy(&o.stdout).contains("10.0.0.1/24"))
         .unwrap_or(false);
     if !has_addr
-        && !setup_command(
+        && !setup_admin(
             tx,
-            "sudo",
             &["ip", "addr", "add", "10.0.0.1/24", "dev", "tap0"],
         )
     {
         return;
     }
-    setup_command(tx, "sudo", &["ip", "link", "set", "dev", "tap0", "up"]);
+    setup_admin(tx, &["ip", "link", "set", "dev", "tap0", "up"]);
 }
 
 fn pump_reader<R: std::io::Read + Send + 'static>(
@@ -783,7 +808,7 @@ impl Lab {
             KeyCode::Char('f') => {
                 let tx = self.tx.clone();
                 thread::spawn(move || {
-                    run_short(&tx, "sudo", &["ip", "neigh", "flush", "dev", "tap0"]);
+                    run_admin_short(&tx, &["ip", "neigh", "flush", "dev", "tap0"]);
                 });
             }
             KeyCode::Char('r') => self.restart_stack(),

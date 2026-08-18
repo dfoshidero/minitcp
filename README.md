@@ -179,9 +179,11 @@ MiniTCP requires Linux because TAP is a Linux kernel device. On macOS or Windows
 
 ```bash
 sudo snap install minitcp
+sudo snap connect minitcp:network-control
+sudo snap connect minitcp:network-observe
 ```
 
-`snap install minitcp` works if your user can talk to snapd without sudo. Create `tap0` on the host (`./setup-tap.sh` or the lab). The snap attaches to that interface; it does not create it.
+`snap install minitcp` works if your user can talk to snapd without sudo. The first two `connect` commands let the snap create `tap0` and run tcpdump without `sudo`. They are needed until the Store auto-connects those plugs.
 
 The host also needs `/dev/net/tun`, `ip`, `ping`, `tcpdump`, and permission to create network interfaces.
 

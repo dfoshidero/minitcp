@@ -15,12 +15,17 @@ apps:
       - network
       - network-bind
       - network-control
+      - network-observe
 
 parts:
   minitcp:
     plugin: rust
     source: .
     rust-channel: stable
+    stage-packages:
+      - iproute2
+      - iputils-ping
+      - tcpdump
     override-build: |
       craftctl default
       craftctl set version="$(sed -n 's/^version = "\(.*\)"/\1/p' "$CRAFT_PART_SRC/Cargo.toml" | head -n1)"
