@@ -11,6 +11,8 @@ confinement: strict
 apps:
   minitcp:
     command: bin/minitcp
+    environment:
+      PATH: $SNAP/usr/sbin:$SNAP/sbin:$SNAP/usr/bin:$SNAP/bin:$PATH
     plugs:
       - network
       - network-bind

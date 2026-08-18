@@ -183,7 +183,9 @@ sudo snap connect minitcp:network-control
 sudo snap connect minitcp:network-observe
 ```
 
-`snap install minitcp` works if your user can talk to snapd without sudo. The first two `connect` commands let the snap create `tap0` and run tcpdump without `sudo`. They are needed until the Store auto-connects those plugs.
+`snap install minitcp` works if your user can talk to snapd without sudo. The two `connect` commands let the snap create `tap0` and run tcpdump without `sudo`. They are needed until the Store auto-connects those plugs.
+
+After install, open a new terminal and run `minitcp`. Snapd puts the command on the normal login PATH (`/snap/bin`); you should not need to export `PATH` yourself.
 
 The host also needs `/dev/net/tun`, `ip`, `ping`, `tcpdump`, and permission to create network interfaces.
 
