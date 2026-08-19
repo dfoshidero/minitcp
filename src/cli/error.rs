@@ -127,7 +127,7 @@ pub(crate) fn flag_usage(flag: &str) -> &'static str {
             "usage: --fwd HOST:PORT         talk to the TAP sidecar over TCP (default: 127.0.0.1:7946)"
         }
         "--listen" => {
-            "usage: --listen ADDR           bridge listen address (default: 0.0.0.0:7946)"
+            "usage: --listen ADDR           bridge listen address (default: 127.0.0.1:7946)"
         }
         "tap" => USAGE_TAP,
         "identity" => USAGE_IDENTITY,
