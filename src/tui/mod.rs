@@ -16,10 +16,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
 use ratatui::{DefaultTerminal, Frame};
 
-use crate::proto::arp::OUR_IP;
+use crate::cli::Config;
 
 const MAX_LINES: usize = 2000;
-const LINUX_IP: &str = "10.0.0.1";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Pane {
@@ -62,11 +61,11 @@ impl DumpFilter {
         }
     }
 
-    fn title(self) -> String {
+    fn title(self, iface: &str) -> String {
         match self {
-            Self::All => "tcpdump -eni tap0 -l".into(),
-            Self::Arp => "tcpdump -eni tap0 -l arp".into(),
-            Self::Ip => "tcpdump -eni tap0 -l ip".into(),
+            Self::All => format!("tcpdump -eni {iface} -l"),
+            Self::Arp => format!("tcpdump -eni {iface} -l arp"),
+            Self::Ip => format!("tcpdump -eni {iface} -l ip"),
         }
     }
 }
@@ -181,13 +180,10 @@ struct ChildProc {
 }
 
 impl ChildProc {
-    fn spawn_stack(verbose: bool) -> std::io::Result<Self> {
+    fn spawn_stack(cfg: &Config, verbose: bool) -> std::io::Result<Self> {
         let exe = std::env::current_exe()?;
         let mut cmd = Command::new(exe);
-        cmd.arg("stack");
-        if !verbose {
-            cmd.arg("--quiet");
-        }
+        cmd.args(cfg.child_stack_args(verbose));
         cmd.stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -206,7 +202,7 @@ impl ChildProc {
         })
     }
 
-    fn spawn_dump(filter: DumpFilter) -> std::io::Result<Self> {
+    fn spawn_dump(filter: DumpFilter, iface: &str) -> std::io::Result<Self> {
         // sudo may put tcpdump behind a monitor process. Have the shell report
         // the exact command PID before exec replaces it with tcpdump.
         let filter_arg = match filter {
@@ -214,7 +210,9 @@ impl ChildProc {
             DumpFilter::Arp => " arp",
             DumpFilter::Ip => " ip",
         };
-        let script = format!("echo __MINITCP_DUMP_PID=$$; exec tcpdump -eni tap0 -l{filter_arg}");
+        let script = format!(
+            "echo __MINITCP_DUMP_PID=$$; exec tcpdump -eni {iface} -l{filter_arg}"
+        );
         let mut cmd = Command::new("sudo");
         cmd.args(["-n", "sh", "-c", &script])
             .stdin(Stdio::null())
@@ -361,6 +359,7 @@ struct Lab {
     action_process: Option<ChildProc>,
     command_input: Option<String>,
     verbose: bool,
+    cfg: Config,
     icmp_in: u32,
     icmp_out: u32,
     arp_in: u32,
@@ -385,16 +384,24 @@ fn setup_command(tx: &Sender<Msg>, program: &str, args: &[&str]) -> bool {
     }
 }
 
-fn ensure_tap0(tx: &Sender<Msg>) {
-    if !Path::new("/dev/net/tun").exists() {
-        let _ = tx.send(Msg::Action(
-            "/dev/net/tun is missing; run in the Dev Container or a privileged Linux container."
-                .into(),
-        ));
+fn ensure_tap(cfg: &Config, tx: &Sender<Msg>) {
+    if !cfg.tun.exists() {
+        let _ = tx.send(Msg::Action(format!(
+            "{} is missing; run in the Dev Container or a privileged Linux container.",
+            cfg.tun.display()
+        )));
         return;
     }
 
-    if !Path::new("/sys/class/net/tap0").exists() {
+    let sys = format!("/sys/class/net/{}", cfg.iface);
+    if !Path::new(&sys).exists() {
+        if cfg.no_create_tap {
+            let _ = tx.send(Msg::Action(format!(
+                "{} is missing and --no-create-tap is set",
+                cfg.iface
+            )));
+            return;
+        }
         let user = Command::new("id")
             .args(["-un"])
             .output()
@@ -406,29 +413,30 @@ fn ensure_tap0(tx: &Sender<Msg>) {
             tx,
             "sudo",
             &[
-                "ip", "tuntap", "add", "dev", "tap0", "mode", "tap", "user", &user,
+                "ip", "tuntap", "add", "dev", &cfg.iface, "mode", "tap", "user", &user,
             ],
         ) {
             return;
         }
     }
 
+    let cidr = format!("{}/24", cfg.linux_addr);
     let has_addr = Command::new("ip")
-        .args(["-4", "addr", "show", "dev", "tap0"])
+        .args(["-4", "addr", "show", "dev", &cfg.iface])
         .output()
         .ok()
-        .map(|o| String::from_utf8_lossy(&o.stdout).contains("10.0.0.1/24"))
+        .map(|o| String::from_utf8_lossy(&o.stdout).contains(&cidr))
         .unwrap_or(false);
     if !has_addr
         && !setup_command(
             tx,
             "sudo",
-            &["ip", "addr", "add", "10.0.0.1/24", "dev", "tap0"],
+            &["ip", "addr", "add", &cidr, "dev", &cfg.iface],
         )
     {
         return;
     }
-    setup_command(tx, "sudo", &["ip", "link", "set", "dev", "tap0", "up"]);
+    setup_command(tx, "sudo", &["ip", "link", "set", "dev", &cfg.iface, "up"]);
 }
 
 fn pump_reader<R: std::io::Read + Send + 'static>(
@@ -458,13 +466,13 @@ fn attach_child(child: &mut ChildProc, tx: Sender<Msg>, wrap: fn(String) -> Msg)
     }
 }
 
-fn tap_status() -> (bool, String) {
-    let up = Path::new("/sys/class/net/tap0").exists();
+fn tap_status(iface: &str, linux_addr: &str) -> (bool, String) {
+    let up = Path::new(&format!("/sys/class/net/{iface}")).exists();
     if !up {
         return (false, "down".into());
     }
     let out = Command::new("ip")
-        .args(["-br", "addr", "show", "tap0"])
+        .args(["-br", "addr", "show", iface])
         .output()
         .ok();
     let text = out
@@ -473,8 +481,8 @@ fn tap_status() -> (bool, String) {
     let up = text.contains("UP");
     let addr = text
         .split_whitespace()
-        .find(|w| w.starts_with("10."))
-        .unwrap_or(LINUX_IP)
+        .find(|w| w.contains('.'))
+        .unwrap_or(linux_addr)
         .to_string();
     (up, addr)
 }
@@ -500,15 +508,16 @@ fn run_short(tx: &Sender<Msg>, program: &str, args: &[&str]) {
 }
 
 impl Lab {
-    fn start() -> std::io::Result<Self> {
+    fn start(cfg: Config) -> std::io::Result<Self> {
         let (tx, rx) = mpsc::channel();
-        ensure_tap0(&tx);
+        ensure_tap(&cfg, &tx);
 
-        let mut stack = ChildProc::spawn_stack(true)?;
+        let verbose = !cfg.quiet;
+        let mut stack = ChildProc::spawn_stack(&cfg, verbose)?;
         attach_child(&mut stack, tx.clone(), Msg::Stack);
 
         let filter = DumpFilter::All;
-        let mut dump = match ChildProc::spawn_dump(filter) {
+        let mut dump = match ChildProc::spawn_dump(filter, &cfg.iface) {
             Ok(mut d) => {
                 attach_child(&mut d, tx.clone(), Msg::Dump);
                 d
@@ -523,7 +532,8 @@ impl Lab {
             }
         };
 
-        let (tap_up, tap_addr) = tap_status();
+        let linux = cfg.linux_addr.to_string();
+        let (tap_up, tap_addr) = tap_status(&cfg.iface, &linux);
         let stack_alive = stack.alive();
         let dump_alive = dump.alive();
         let mut action_buf = Buffer::new();
@@ -550,7 +560,8 @@ impl Lab {
             dump_alive,
             action_process: None,
             command_input: None,
-            verbose: true,
+            verbose,
+            cfg,
             icmp_in: 0,
             icmp_out: 0,
             arp_in: 0,
@@ -573,7 +584,7 @@ impl Lab {
 
     fn restart_stack(&mut self) {
         self.stack.kill();
-        match ChildProc::spawn_stack(self.verbose) {
+        match ChildProc::spawn_stack(&self.cfg, self.verbose) {
             Ok(mut c) => {
                 attach_child(&mut c, self.tx.clone(), Msg::Stack);
                 self.stack = c;
@@ -590,12 +601,12 @@ impl Lab {
 
     fn restart_dump(&mut self) {
         self.dump.kill();
-        match ChildProc::spawn_dump(self.filter) {
+        match ChildProc::spawn_dump(self.filter, &self.cfg.iface) {
             Ok(mut c) => {
                 attach_child(&mut c, self.tx.clone(), Msg::Dump);
                 self.dump = c;
                 self.dump_alive = true;
-                self.push_pane(Pane::Dump, format!("— {} —", self.filter.title()));
+                self.push_pane(Pane::Dump, format!("— {} —", self.filter.title(&self.cfg.iface)));
             }
             Err(e) => self.push_pane(Pane::Dump, format!("tcpdump failed: {e}")),
         }
@@ -697,7 +708,8 @@ impl Lab {
 
     fn refresh_status(&mut self) {
         if self.last_status.elapsed() > Duration::from_millis(800) {
-            let (up, addr) = tap_status();
+            let linux = self.cfg.linux_addr.to_string();
+            let (up, addr) = tap_status(&self.cfg.iface, &linux);
             self.tap_up = up;
             self.tap_addr = addr;
             let stack_alive = self.stack.alive();
@@ -770,20 +782,23 @@ impl Lab {
             }
             KeyCode::Char('p') => {
                 let tx = self.tx.clone();
+                let addr = self.cfg.addr.to_string();
                 thread::spawn(move || {
-                    run_short(&tx, "ping", &["-c", "1", "-W", "1", "10.0.0.2"]);
+                    run_short(&tx, "ping", &["-c", "1", "-W", "1", &addr]);
                 });
             }
             KeyCode::Char('n') => {
                 let tx = self.tx.clone();
+                let iface = self.cfg.iface.clone();
                 thread::spawn(move || {
-                    run_short(&tx, "ip", &["neigh", "show", "dev", "tap0"]);
+                    run_short(&tx, "ip", &["neigh", "show", "dev", &iface]);
                 });
             }
             KeyCode::Char('f') => {
                 let tx = self.tx.clone();
+                let iface = self.cfg.iface.clone();
                 thread::spawn(move || {
-                    run_short(&tx, "sudo", &["ip", "neigh", "flush", "dev", "tap0"]);
+                    run_short(&tx, "sudo", &["ip", "neigh", "flush", "dev", &iface]);
                 });
             }
             KeyCode::Char('r') => self.restart_stack(),
@@ -905,7 +920,7 @@ fn draw(frame: &mut Frame, lab: &mut Lab) {
         ])
         .split(frame.area());
 
-    let ours = OUR_IP.map(|b| b.to_string()).join(".");
+    let ours = lab.cfg.addr.to_string();
     let tap = if lab.tap_up { "UP" } else { "DOWN" };
     let tap_color = if lab.tap_up { Color::Green } else { Color::Red };
     let stack_st = if lab.stack_alive { "run" } else { "off" };
@@ -918,7 +933,7 @@ fn draw(frame: &mut Frame, lab: &mut Lab) {
                 .bg(Color::Blue)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw(" tap0 "),
+        Span::raw(format!(" {} ", lab.cfg.iface)),
         Span::styled(
             tap,
             Style::default().fg(tap_color).add_modifier(Modifier::BOLD),
@@ -1084,8 +1099,8 @@ fn ui_loop(terminal: &mut DefaultTerminal, lab: &mut Lab) -> std::io::Result<()>
     Ok(())
 }
 
-pub fn run_lab() -> std::io::Result<()> {
-    let mut lab = Lab::start()?;
+pub fn run_lab(cfg: Config) -> std::io::Result<()> {
+    let mut lab = Lab::start(cfg)?;
     let mut terminal = ratatui::init();
     let result = ui_loop(&mut terminal, &mut lab);
     ratatui::restore();

@@ -23,8 +23,8 @@ fn main() -> std::io::Result<()> {
             eprint!("{}", cli::usage());
             Ok(())
         }
-        cli::Command::Run => tui::run_lab(),
-        cli::Command::Stack => stack::run_stack(cfg.verbose()),
+        cli::Command::Run => tui::run_lab(cfg),
+        cli::Command::Stack => stack::run_stack(cfg),
         cli::Command::Replay(_) | cli::Command::PcapInfo(_) => {
             eprintln!("minitcp: pcap commands are not wired yet");
             std::process::exit(2);

@@ -2,6 +2,7 @@
 use std::fs::{File, OpenOptions};
 use std::io::{self , Read , Write};
 use std::os::fd::AsRawFd;
+use std::path::Path;
 
 // ioctl command: "this open file is the named TAP/TUN device." Opening /dev/net/tun is not enough by itself.
 const TUNSETIFF: libc::c_ulong = 0x4004_54ca;
@@ -15,7 +16,7 @@ pub struct TapInterface {
 }
 
 impl TapInterface {
-    pub fn open(name: &str) -> io::Result<Self> {
+    pub fn open_at(tun: &Path, name: &str) -> io::Result<Self> {
 
         // The kernel copies the name into a fixed C array that includes a trailing NUL, so `>=` is too long.
         if name.is_empty() || name.len() >= libc::IFNAMSIZ as usize {
@@ -29,7 +30,7 @@ impl TapInterface {
         let file = OpenOptions::new()
             .read(true)
             .write(true)
-            .open("/dev/net/tun")?;
+            .open(tun)?;
 
         let mut ifr: libc::ifreq = unsafe { std::mem::zeroed() };
         // Kernel reads the interface name from this C struct, not from the path we opened.

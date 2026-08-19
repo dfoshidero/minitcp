@@ -3,9 +3,10 @@
 use std::net::Ipv4Addr;
 use std::path::Path;
 
+use crate::cli::Config;
 use crate::interface::tap::TapInterface;
 use crate::log::{self, Verb};
-use crate::proto::arp::{reply_for, OUR_IP, OUR_MAC};
+use crate::proto::arp::reply_for;
 use crate::proto::ethernet::{EthernetFrame, EthernetType};
 use crate::proto::icmp::make_echo_reply;
 use crate::proto::ipv4::{Ipv4Packet, Protocol};
@@ -61,30 +62,38 @@ fn ip_pair(src: Ipv4Addr, dst: Ipv4Addr) -> String {
     format!("{src} -> {dst}")
 }
 
-fn open_tap0() -> TapInterface {
-    if !Path::new("/dev/net/tun").exists() {
-        eprintln!("cannot open /dev/net/tun. Reopen this folder in the Dev Container.");
+fn open_tap(cfg: &Config) -> TapInterface {
+    if !cfg.tun.exists() {
+        eprintln!(
+            "cannot open {}. Reopen this folder in the Dev Container.",
+            cfg.tun.display()
+        );
         std::process::exit(1);
     }
 
-    if !Path::new("/sys/class/net/tap0").exists() {
-        eprintln!("tap0 is not up yet. Create it first:");
+    let sys = format!("/sys/class/net/{}", cfg.iface);
+    if !Path::new(&sys).exists() {
+        eprintln!("{} is not up yet. Create it first:", cfg.iface);
         eprintln!("  ./scripts/setup-tap.sh");
         std::process::exit(1);
     }
 
-    match TapInterface::open("tap0") {
+    match TapInterface::open_at(&cfg.tun, &cfg.iface) {
         Ok(tap) => tap,
         Err(e) => {
-            eprintln!("cannot attach to tap0: {e}");
+            eprintln!("cannot attach to {}: {e}", cfg.iface);
             eprintln!("Try:  ./scripts/setup-tap.sh");
             std::process::exit(1);
         }
     }
 }
 
-pub fn run_stack(verbose: bool) -> std::io::Result<()> {
-    let mut tap = open_tap0();
+pub fn run_stack(cfg: Config) -> std::io::Result<()> {
+    let mut tap = open_tap(&cfg);
+    eprintln!("listening {} as {} ({})", cfg.iface, cfg.addr, cfg.mac);
+    let verbose = cfg.verbose();
+    let our_ip = cfg.our_ip_bytes();
+    let our_mac = cfg.mac;
     let mut buffer = [0u8; 2048];
     loop {
         let n = tap.read_frame(&mut buffer)?;
@@ -102,7 +111,7 @@ pub fn run_stack(verbose: bool) -> std::io::Result<()> {
 
         match frame.ethertype {
             EthernetType::Arp => {
-                let Some(reply) = reply_for(frame.payload) else {
+                let Some(reply) = reply_for(frame.payload, our_ip, our_mac) else {
                     if verbose {
                         log::emit_at(&when, Verb::In, "ethernet", "L2", &macs, "ethertype 0x0806");
                         let arp_addrs = arp_addrs(frame.payload)
@@ -118,7 +127,7 @@ pub fn run_stack(verbose: bool) -> std::io::Result<()> {
                 EthernetFrame::write_ethernet(
                     &mut ethernet_reply,
                     frame.source,
-                    OUR_MAC,
+                    our_mac,
                     0x0806,
                     &reply,
                 );
@@ -139,7 +148,7 @@ pub fn run_stack(verbose: bool) -> std::io::Result<()> {
                         Verb::Out,
                         "ethernet",
                         "L2",
-                        &format!("{} -> {}", OUR_MAC, frame.source),
+                        &format!("{} -> {}", our_mac, frame.source),
                         "ethertype 0x0806",
                     );
                     log::emit_cont(
@@ -147,8 +156,8 @@ pub fn run_stack(verbose: bool) -> std::io::Result<()> {
                         Verb::More,
                         "arp",
                         "L2",
-                        &ip_pair(Ipv4Addr::from(OUR_IP), spa),
-                        &format!("is-at {OUR_MAC}"),
+                        &ip_pair(Ipv4Addr::from(our_ip), spa),
+                        &format!("is-at {our_mac}"),
                     );
                 } else {
                     log::emit_quiet(&when, "arp", &ip_pair(spa, tpa), "who-has");
@@ -176,7 +185,7 @@ pub fn run_stack(verbose: bool) -> std::io::Result<()> {
 
                     match packet.protocol {
                         Protocol::Icmp => {
-                            if packet.destination.octets() != OUR_IP {
+                            if packet.destination.octets() != our_ip {
                                 if verbose {
                                     log::emit_inside(&when, Verb::Drop, "icmp", "L3", "not for us");
                                 } else {
@@ -208,7 +217,7 @@ pub fn run_stack(verbose: bool) -> std::io::Result<()> {
                                         &mut ip_packet,
                                         64,
                                         Protocol::Icmp,
-                                        Ipv4Addr::from(OUR_IP),
+                                        Ipv4Addr::from(our_ip),
                                         packet.source,
                                         &icmp_reply,
                                     );
@@ -216,7 +225,7 @@ pub fn run_stack(verbose: bool) -> std::io::Result<()> {
                                     EthernetFrame::write_ethernet(
                                         &mut ethernet_reply,
                                         frame.source,
-                                        OUR_MAC,
+                                        our_mac,
                                         0x0800,
                                         &ip_packet,
                                     );
@@ -228,7 +237,7 @@ pub fn run_stack(verbose: bool) -> std::io::Result<()> {
                                             Verb::Out,
                                             "ethernet",
                                             "L2",
-                                            &format!("{} -> {}", OUR_MAC, frame.source),
+                                            &format!("{} -> {}", our_mac, frame.source),
                                             "ethertype 0x0800",
                                         );
                                         log::emit_cont(
@@ -236,7 +245,7 @@ pub fn run_stack(verbose: bool) -> std::io::Result<()> {
                                             Verb::More,
                                             "ipv4",
                                             "L3",
-                                            &ip_pair(Ipv4Addr::from(OUR_IP), packet.source),
+                                            &ip_pair(Ipv4Addr::from(our_ip), packet.source),
                                             &format!(
                                                 "ttl=64 proto=icmp payload={}",
                                                 icmp_reply.len()
