@@ -28,7 +28,8 @@ RUN groupadd --gid ${USER_GID} ${USERNAME} \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/target/release/minitcp /usr/local/bin/minitcp
+COPY --chmod=755 docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 
 USER netstack
 WORKDIR /home/netstack
-ENTRYPOINT ["minitcp"]
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

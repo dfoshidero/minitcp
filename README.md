@@ -20,7 +20,9 @@ docker run --rm -it \
   ghcr.io/dfoshidero/minitcp
 ```
 
-That pulls the image on first use and opens the terminal lab. Pass the same flags the binary already has, for example `stack -q` at the end of the command.
+That pulls the image on first use, prints `minitcp --help`, and drops you in a shell with `minitcp` on `PATH`. Run `minitcp` for the terminal lab (`q` returns to the shell).
+
+If you really want to, you can pass subcommands on the same `docker run` line, for example `stack -q` at the end. You can however also do this directly in the image, `minitcp stack -q`.
 
 The image is `linux/amd64` and `linux/arm64` (Intel/AMD Linux, and Apple Silicon via Docker Desktop). TAP is a Linux kernel device, so on macOS or Windows the lab runs in Docker’s Linux VM.
 
