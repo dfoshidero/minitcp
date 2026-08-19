@@ -3,12 +3,11 @@
 mod cli;
 mod interface;
 mod log;
-mod process;
 mod proto;
+mod release;
 mod stack;
-mod tapcmd;
+mod sys;
 mod tui;
-mod update;
 
 use cli::{Command, HelpTopic};
 
@@ -56,7 +55,7 @@ fn run() -> Result<(), AppError> {
             Command::Run | Command::Stack | Command::Replay(_)
         );
     if !skip_nag {
-        update::nag_if_outdated();
+        release::nag_if_outdated();
     }
 
     match cfg.command {
@@ -72,8 +71,8 @@ fn run() -> Result<(), AppError> {
             Ok(())
         }
         Command::Bridge => stack::run_bridge(cfg).map_err(Into::into),
-        Command::TapUp => tapcmd::tap_up(&cfg).map_err(Into::into),
-        Command::TapDown => tapcmd::tap_down(&cfg).map_err(Into::into),
+        Command::TapUp => sys::tapdev::tap_up(&cfg).map_err(Into::into),
+        Command::TapDown => sys::tapdev::tap_down(&cfg).map_err(Into::into),
         Command::TapShow => {
             log::write_stderr(&tap_status(&cfg))?;
             log::write_stderr(&cli::usage_topic(HelpTopic::Tap))?;

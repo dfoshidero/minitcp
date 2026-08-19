@@ -18,7 +18,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
 use ratatui::{DefaultTerminal, Frame};
 
 use crate::cli::{Config, Transport};
-use crate::tapcmd::CONTAINER;
+use crate::sys::docker::CONTAINER;
 
 const MAX_LINES: usize = 2000;
 const SHORT_COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
@@ -516,11 +516,11 @@ fn signal_elsewhere(stop: Stop, pid: i32, signal: &str) {
         Stop::InContainer => ("docker", vec!["exec", CONTAINER, "kill", &flag, &pid]),
         Stop::Group => return,
     };
-    match crate::process::output_timeout(program, &args, Duration::from_secs(3)) {
+    match crate::sys::process::output_timeout(program, &args, Duration::from_secs(3)) {
         Ok(output) if output.status.success() => {}
         Ok(output) => crate::log::status::warn(format!(
             "could not stop the tcpdump process {pid}: {}",
-            crate::process::output_detail(&output)
+            crate::sys::process::output_detail(&output)
         )),
         Err(error) => {
             crate::log::status::warn(format!("could not stop the tcpdump process {pid}: {error}"))
@@ -557,7 +557,7 @@ fn wait_for_exit(stop: Stop, pid: i32, timeout: Duration) -> bool {
             // `kill -0` sends no signal; it only asks "does this exist, and
             // may I signal it?".
             let pid = pid.to_string();
-            crate::process::output_timeout(
+            crate::sys::process::output_timeout(
                 "docker",
                 &["exec", CONTAINER, "kill", "-0", &pid],
                 Duration::from_secs(3),
@@ -649,7 +649,7 @@ fn report_tap_status(cfg: &Config, tx: &Sender<Msg>) {
         return;
     }
 
-    if Path::new(&format!("/sys/class/net/{}", cfg.iface)).exists() {
+    if crate::sys::tapdev::iface_exists(&cfg.iface) {
         let _ = tx.send(Msg::Action(format!("attached to {}", cfg.iface)));
     } else {
         let _ = tx.send(Msg::Action(format!(
@@ -705,11 +705,11 @@ fn attach_child(
 }
 
 fn tap_status(iface: &str, linux_addr: &str) -> (bool, String) {
-    let up = Path::new(&format!("/sys/class/net/{iface}")).exists();
+    let up = crate::sys::tapdev::iface_exists(iface);
     if !up {
         return (false, "down".into());
     }
-    let out = crate::process::output_timeout(
+    let out = crate::sys::process::output_timeout(
         "ip",
         &["-br", "addr", "show", iface],
         SHORT_COMMAND_TIMEOUT,
@@ -730,7 +730,7 @@ fn tap_status(iface: &str, linux_addr: &str) -> (bool, String) {
 fn run_short(tx: &Sender<Msg>, program: &str, args: &[&str]) {
     let shown = format!("$ {program} {}", args.join(" "));
     let _ = tx.send(Msg::Action(shown));
-    match crate::process::output_timeout(program, args, SHORT_COMMAND_TIMEOUT) {
+    match crate::sys::process::output_timeout(program, args, SHORT_COMMAND_TIMEOUT) {
         Ok(out) => {
             let stdout = String::from_utf8_lossy(&out.stdout);
             let stderr = String::from_utf8_lossy(&out.stderr);

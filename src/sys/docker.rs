@@ -1,4 +1,9 @@
-// Host helpers: start/stop the TAP sidecar (Docker) or local Linux TAP.
+// The TAP sidecar: a container that owns the real TAP so macOS (and any host
+// without /dev/net/tun) can still run the lab.
+//
+// Everything in here is about the *container*. What goes on the wire once it is
+// running belongs to `interface::fwd`, and creating a TAP directly on this
+// machine belongs to `sys::tapdev`.
 
 use std::io;
 use std::thread;
@@ -6,10 +11,28 @@ use std::time::{Duration, Instant};
 
 use crate::cli::Config;
 use crate::interface::fwd::DEFAULT_FWD;
-use crate::process::{self, AllowedFailure};
+use crate::sys::process::{self, AllowedFailure};
 
 pub(crate) const CONTAINER: &str = "minitcp-tap";
 const IMAGE_REPO: &str = "ghcr.io/dfoshidero/minitcp";
+
+const READY_TIMEOUT: Duration = Duration::from_secs(90);
+const READY_INTERVAL: Duration = Duration::from_millis(200);
+const COMMAND_TIMEOUT: Duration = Duration::from_secs(3);
+const RUN_TIMEOUT: Duration = Duration::from_secs(120);
+const RUN_ATTEMPTS: usize = 3;
+
+/// What Docker looks like from here, before we ask it to do anything.
+///
+/// The three cases lead to genuinely different advice, which is why they are
+/// kept apart: `Missing` means Docker is not installed (fine on Linux, fatal
+/// elsewhere), while `Unavailable` means it is installed but not answering —
+/// usually Docker Desktop simply is not started.
+pub enum State {
+    Ready,
+    Missing,
+    Unavailable(String),
+}
 
 /// Which sidecar image to run, and how eagerly to re-pull it.
 ///
@@ -31,82 +54,9 @@ fn image_and_pull_policy() -> (String, &'static str) {
     (format!("{IMAGE_REPO}:{release}"), "missing")
 }
 
-const READY_TIMEOUT: Duration = Duration::from_secs(90);
-const READY_INTERVAL: Duration = Duration::from_millis(200);
-const COMMAND_TIMEOUT: Duration = Duration::from_secs(3);
-const DOCKER_RUN_TIMEOUT: Duration = Duration::from_secs(120);
-const DOCKER_RUN_ATTEMPTS: usize = 3;
-
-enum DockerState {
-    Ready,
-    Missing,
-    Unavailable(String),
-}
-
-pub fn tap_up(cfg: &Config) -> io::Result<()> {
-    match docker_state()? {
-        DockerState::Ready => return docker_up(cfg),
-        DockerState::Unavailable(detail) if !cfg!(target_os = "linux") => {
-            return Err(io::Error::other(format!(
-                "Docker is unavailable; start Docker Desktop and try again: {detail}"
-            )));
-        }
-        DockerState::Unavailable(detail) => {
-            crate::log::status::warn(format!(
-                "Docker is unavailable ({detail}); using a local Linux TAP"
-            ));
-        }
-        DockerState::Missing => {}
-    }
-    if cfg!(target_os = "linux") {
-        return local_linux_up(cfg);
-    }
-    Err(io::Error::new(
-        io::ErrorKind::NotFound,
-        "docker not found; install Docker Desktop (or Docker Engine) for TAP",
-    ))
-}
-
-pub fn tap_down(cfg: &Config) -> io::Result<()> {
-    let docker = docker_state()?;
-    if matches!(&docker, DockerState::Ready) {
-        let output = process::output_timeout("docker", &["rm", "-f", CONTAINER], COMMAND_TIMEOUT)?;
-        if output.status.success() {
-            crate::log::status::ok(format!("stopped {CONTAINER}"));
-            return Ok(());
-        }
-        process::check_output(
-            "docker",
-            &["rm", "-f", CONTAINER],
-            output,
-            AllowedFailure::DoesNotExist,
-        )?;
-    }
-    if cfg!(target_os = "linux") {
-        if let DockerState::Unavailable(detail) = docker {
-            crate::log::status::warn(format!(
-                "Docker is unavailable ({detail}); removing only the local Linux TAP"
-            ));
-        }
-        process::run_sudo(
-            &["ip", "link", "delete", &cfg.iface],
-            AllowedFailure::DoesNotExist,
-        )?;
-        crate::log::status::ok(format!("removed {} if it existed", cfg.iface));
-        return Ok(());
-    }
-    if let DockerState::Unavailable(detail) = docker {
-        return Err(io::Error::other(format!(
-            "Docker is unavailable, so the TAP sidecar could not be stopped: {detail}"
-        )));
-    }
-    crate::log::status::info("TAP sidecar was not running");
-    Ok(())
-}
-
-fn docker_state() -> io::Result<DockerState> {
+pub fn state() -> io::Result<State> {
     match process::output_timeout("docker", &["info"], COMMAND_TIMEOUT) {
-        Ok(output) if output.status.success() => Ok(DockerState::Ready),
+        Ok(output) if output.status.success() => Ok(State::Ready),
         Ok(output) => {
             let detail = process::output_detail(&output);
             let detail = if detail.is_empty() {
@@ -114,14 +64,66 @@ fn docker_state() -> io::Result<DockerState> {
             } else {
                 detail
             };
-            Ok(DockerState::Unavailable(detail))
+            Ok(State::Unavailable(detail))
         }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(DockerState::Missing),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(State::Missing),
         Err(error) => Err(io::Error::new(
             error.kind(),
             format!("cannot check Docker: {error}"),
         )),
     }
+}
+
+/// Start the sidecar if it is not already up, then wait until it is listening.
+pub fn up(cfg: &Config) -> io::Result<()> {
+    if !container_running()? {
+        remove_quietly();
+
+        let (image, pull) = image_and_pull_policy();
+        let mut error = start_container(cfg, &image, pull).err();
+
+        // A version-pinned image may simply not have been published — a build
+        // straight from `main` names a version that only exists once it is
+        // released. That is not the user's problem to solve, so fall back to
+        // `:latest` and say plainly what happened.
+        if error.as_ref().is_some_and(is_missing_image) && !image.ends_with(":latest") {
+            crate::log::status::warn(format!(
+                "{image} has not been published; falling back to :latest"
+            ));
+            remove_quietly();
+            error = start_container(cfg, &format!("{IMAGE_REPO}:latest"), "always").err();
+        }
+
+        if let Some(error) = error {
+            dump_logs();
+            return Err(io::Error::new(
+                error.kind(),
+                format!("TAP sidecar failed to start: {error}"),
+            ));
+        }
+    }
+
+    wait_until_listening(cfg)?;
+    crate::log::status::ok(format!(
+        "TAP sidecar up; Linux  {} on {}  (host stack: {})",
+        cfg.linux_addr,
+        cfg.iface,
+        cfg.fwd_addr()
+    ));
+    Ok(())
+}
+
+/// Remove the sidecar. `Ok(false)` means there was nothing to remove, which
+/// leaves the caller free to go looking for a local TAP instead.
+pub fn down() -> io::Result<bool> {
+    let args = ["rm", "-f", CONTAINER];
+    let output = process::output_timeout("docker", &args, COMMAND_TIMEOUT)?;
+    if output.status.success() {
+        crate::log::status::ok(format!("stopped {CONTAINER}"));
+        return Ok(true);
+    }
+    process::check_output("docker", &args, output, AllowedFailure::DoesNotExist)?;
+    Ok(false)
 }
 
 /// `docker run` the sidecar, retrying a few times.
@@ -163,8 +165,8 @@ fn start_container(cfg: &Config, image: &str, pull: &str) -> io::Result<()> {
     let refs: Vec<_> = args.iter().map(String::as_str).collect();
 
     let mut last_error = None;
-    for attempt in 1..=DOCKER_RUN_ATTEMPTS {
-        match process::output_timeout("docker", &refs, DOCKER_RUN_TIMEOUT) {
+    for attempt in 1..=RUN_ATTEMPTS {
+        match process::output_timeout("docker", &refs, RUN_TIMEOUT) {
             Ok(output) if output.status.success() => return Ok(()),
             Ok(output) => {
                 last_error =
@@ -177,11 +179,11 @@ fn start_container(cfg: &Config, image: &str, pull: &str) -> io::Result<()> {
         if last_error.as_ref().is_some_and(is_missing_image) {
             break;
         }
-        if attempt < DOCKER_RUN_ATTEMPTS {
+        if attempt < RUN_ATTEMPTS {
             crate::log::status::warn(format!(
-                "TAP sidecar start failed; retrying ({attempt}/{DOCKER_RUN_ATTEMPTS})"
+                "TAP sidecar start failed; retrying ({attempt}/{RUN_ATTEMPTS})"
             ));
-            docker_rm_quiet();
+            remove_quietly();
             thread::sleep(Duration::from_secs(1));
         }
     }
@@ -198,45 +200,9 @@ fn is_missing_image(error: &io::Error) -> bool {
         || detail.contains("manifest for")
 }
 
-fn docker_up(cfg: &Config) -> io::Result<()> {
-    if !container_running()? {
-        docker_rm_quiet();
-
-        let (image, pull) = image_and_pull_policy();
-        let mut error = start_container(cfg, &image, pull).err();
-
-        // A version-pinned image may simply not have been published — a build
-        // straight from `main` names a version that only exists once it is
-        // released. That is not the user's problem to solve, so fall back to
-        // `:latest` and say plainly what happened.
-        if error.as_ref().is_some_and(is_missing_image) && !image.ends_with(":latest") {
-            crate::log::status::warn(format!(
-                "{image} has not been published; falling back to :latest"
-            ));
-            docker_rm_quiet();
-            error = start_container(cfg, &format!("{IMAGE_REPO}:latest"), "always").err();
-        }
-
-        if let Some(error) = error {
-            dump_sidecar_logs();
-            return Err(io::Error::new(
-                error.kind(),
-                format!("TAP sidecar failed to start: {error}"),
-            ));
-        }
-    }
-
-    wait_for_sidecar(cfg)?;
-    crate::log::status::ok(format!(
-        "TAP sidecar up; Linux  {} on {}  (host stack: {})",
-        cfg.linux_addr,
-        cfg.iface,
-        cfg.fwd_addr()
-    ));
-    Ok(())
-}
-
-fn wait_for_sidecar(cfg: &Config) -> io::Result<()> {
+/// A started container is not a ready one: the bridge inside it still has to
+/// create its TAP and bind the port. Poll the port rather than guessing.
+fn wait_until_listening(cfg: &Config) -> io::Result<()> {
     let addr = cfg.fwd_addr();
     let deadline = Instant::now() + READY_TIMEOUT;
     loop {
@@ -244,13 +210,13 @@ fn wait_for_sidecar(cfg: &Config) -> io::Result<()> {
             return Ok(());
         }
         if !container_running()? {
-            dump_sidecar_logs();
+            dump_logs();
             return Err(io::Error::other(
                 "TAP sidecar exited before it was listening",
             ));
         }
         if Instant::now() >= deadline {
-            dump_sidecar_logs();
+            dump_logs();
             return Err(io::Error::other(format!(
                 "TAP sidecar did not accept {addr} within {}s",
                 READY_TIMEOUT.as_secs()
@@ -261,23 +227,15 @@ fn wait_for_sidecar(cfg: &Config) -> io::Result<()> {
 }
 
 fn container_running() -> io::Result<bool> {
-    let output = process::output_timeout(
-        "docker",
-        &["inspect", "-f", "{{.State.Running}}", CONTAINER],
-        COMMAND_TIMEOUT,
-    )?;
+    let args = ["inspect", "-f", "{{.State.Running}}", CONTAINER];
+    let output = process::output_timeout("docker", &args, COMMAND_TIMEOUT)?;
     if !output.status.success() {
         let detail = process::output_detail(&output);
         if detail.to_ascii_lowercase().contains("no such object") {
             return Ok(false);
         }
-        return process::check_output(
-            "docker",
-            &["inspect", "-f", "{{.State.Running}}", CONTAINER],
-            output,
-            AllowedFailure::None,
-        )
-        .map(|()| false);
+        return process::check_output("docker", &args, output, AllowedFailure::None)
+            .map(|()| false);
     }
     let state = String::from_utf8(output.stdout).map_err(|error| {
         io::Error::new(
@@ -288,11 +246,14 @@ fn container_running() -> io::Result<bool> {
     Ok(state.trim() == "true")
 }
 
-fn docker_rm_quiet() {
+fn remove_quietly() {
     let _ = process::output_timeout("docker", &["rm", "-f", CONTAINER], COMMAND_TIMEOUT);
 }
 
-fn dump_sidecar_logs() {
+/// When the sidecar will not start, the reason is almost always in its own
+/// logs, not in what `docker run` printed. Show them rather than make the user
+/// go and find them.
+fn dump_logs() {
     match process::output_timeout("docker", &["logs", CONTAINER], COMMAND_TIMEOUT) {
         Ok(out) => {
             crate::log::status::info(format!("--- docker logs {CONTAINER} ---"));
@@ -312,19 +273,6 @@ fn dump_sidecar_logs() {
             "could not read Docker logs for {CONTAINER}: {error}"
         )),
     }
-}
-
-/// Bring up a TAP on this machine, with no container in the picture.
-///
-/// The actual `ip` calls live in `interface::tap::ensure_iface`, which is the
-/// single implementation shared with the sidecar and the terminal UI.
-fn local_linux_up(cfg: &Config) -> io::Result<()> {
-    crate::interface::tap::ensure_iface(&cfg.iface, cfg.linux_addr)?;
-    crate::log::status::ok(format!(
-        "local TAP {} up ({}/24)",
-        cfg.iface, cfg.linux_addr
-    ));
-    Ok(())
 }
 
 #[cfg(test)]

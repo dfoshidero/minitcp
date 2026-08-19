@@ -151,7 +151,7 @@ fn retryable_tap_attach(error: &io::Error) -> bool {
 }
 
 pub fn run_bridge(cfg: Config) -> std::io::Result<()> {
-    crate::interface::tap::ensure_iface(&cfg.iface, cfg.linux_addr)?;
+    crate::sys::tapdev::ensure_iface(&cfg.iface, cfg.linux_addr)?;
     let tap = open_tap(&cfg)?;
     crate::interface::fwd::run_bridge(&cfg.listen, tap)
 }
