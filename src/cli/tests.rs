@@ -262,3 +262,84 @@ fn force_tap_and_no_create_are_gone() {
     let err = parse_err(&["--no-create-tap"]);
     assert!(err.contains("unknown flag '--no-create-tap'"), "{err}");
 }
+
+// The flag table is the single list of what minitcp accepts. These pin the
+// three consumers to it, so a flag added in one place and forgotten in another
+// fails here rather than at somebody's terminal.
+
+#[test]
+fn every_flag_in_the_table_parses() {
+    // --config is checked for existence at parse time, so it needs a real file.
+    let config = unique_dir().join("minitcp.toml");
+    fs::write(&config, "").unwrap();
+    for flag in super::flags::FLAGS {
+        let mut argv = vec![flag.name.to_string()];
+        if let Some(metavar) = flag.metavar {
+            let value = if flag.name == "--config" {
+                config.display().to_string()
+            } else {
+                sample_value(metavar).to_string()
+            };
+            argv.push(value);
+        }
+        assert!(
+            parse_from(&argv, &empty_cwd()).is_ok(),
+            "{} is in FLAGS but apply_flag rejects it",
+            flag.name
+        );
+    }
+}
+
+#[test]
+fn short_spellings_mean_the_same_as_long_ones() {
+    for flag in super::flags::FLAGS {
+        let Some(short) = flag.short else { continue };
+        assert_eq!(super::flags::canonical(short), flag.name);
+        assert_eq!(
+            super::flags::takes_value(short),
+            flag.metavar.is_some(),
+            "{short} and {} disagree about taking a value",
+            flag.name
+        );
+    }
+}
+
+#[test]
+fn the_tui_child_is_only_handed_flags_that_exist() {
+    let cfg = parse_ok(&["stack"]);
+    let argv = cfg.child_stack_args(true);
+    for word in argv.iter().filter(|w| w.starts_with('-')) {
+        assert!(
+            super::flags::lookup(word).is_some(),
+            "child_stack_args passes {word}, which is not in FLAGS"
+        );
+    }
+}
+
+#[test]
+fn flag_usage_names_the_flag_and_its_value() {
+    assert_eq!(
+        super::usage::flag_usage("--iface"),
+        "usage: --iface NAME            which TAP (default: tap0)"
+    );
+    assert_eq!(
+        super::usage::flag_usage("-c"),
+        "usage: -c, --count N           stop after N frames (stack/replay)"
+    );
+}
+
+/// A value each metavar will actually accept, so the table test exercises the
+/// parser rather than the error path.
+fn sample_value(metavar: &str) -> &'static str {
+    match metavar {
+        "NAME" => "tap0",
+        "IP" => "10.0.0.9",
+        "MAC" => "02:00:00:00:00:09",
+        "PATH" | "FILE" => "/tmp/minitcp-flag-table",
+        "HOST:PORT" => "127.0.0.1:7946",
+        "ADDR" => "127.0.0.1:7946",
+        "arp|icmp|ip" => "icmp",
+        "N" => "1",
+        other => panic!("no sample value for metavar {other}"),
+    }
+}

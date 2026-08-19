@@ -1,8 +1,10 @@
 // Turning one flag and its text into a value.
 //
-// `apply_flag` is the single table of every flag minitcp accepts. The parsers
-// below it are shared with minitcp.toml, so `--addr 10.0.0.3` and
-// `addr = "10.0.0.3"` cannot drift apart.
+// `FLAGS` is the single list of every flag minitcp accepts; walking argv,
+// `--help` and error messages all read it, so a new flag is one entry rather
+// than four edits in four files. `apply_flag` below turns one of them into a
+// `Partial` field, using parsers shared with minitcp.toml so `--addr 10.0.0.3`
+// and `addr = "10.0.0.3"` cannot drift apart.
 
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
@@ -12,6 +14,149 @@ use crate::proto::ethernet::MacAddress;
 use super::error::{ParseError, missing_value};
 use super::options::{DropKind, Partial};
 use super::usage::flag_usage;
+
+/// One flag, described once.
+pub(super) struct Flag {
+    /// The long name, as typed.
+    pub name: &'static str,
+    /// The short alias, if it has one.
+    pub short: Option<&'static str>,
+    /// What the value is called in help. `None` means the flag is on/off, and
+    /// is also how argv walking knows not to eat the next word.
+    pub metavar: Option<&'static str>,
+    /// The one line of help shown after the name.
+    pub help: &'static str,
+}
+
+pub(super) const FLAGS: &[Flag] = &[
+    Flag {
+        name: "--iface",
+        short: None,
+        metavar: Some("NAME"),
+        help: "which TAP (default: tap0)",
+    },
+    Flag {
+        name: "--addr",
+        short: None,
+        metavar: Some("IP"),
+        help: "MiniTCP's IPv4 (default: 10.0.0.2)",
+    },
+    Flag {
+        name: "--mac",
+        short: None,
+        metavar: Some("MAC"),
+        help: "MiniTCP's MAC (default: 02:00:00:00:00:02)",
+    },
+    Flag {
+        name: "--linux-addr",
+        short: None,
+        metavar: Some("IP"),
+        help: "Linux's IPv4 on that TAP (default: same street, .1)",
+    },
+    Flag {
+        name: "--tun",
+        short: None,
+        metavar: Some("PATH"),
+        help: "tun device (default: /dev/net/tun)",
+    },
+    Flag {
+        name: "--fwd",
+        short: None,
+        metavar: Some("HOST:PORT"),
+        help: "talk to the TAP sidecar over TCP (default: 127.0.0.1:7946)",
+    },
+    Flag {
+        name: "--listen",
+        short: None,
+        metavar: Some("ADDR"),
+        help: "bridge listen address (default: 127.0.0.1:7946)",
+    },
+    Flag {
+        name: "--write",
+        short: None,
+        metavar: Some("FILE"),
+        help: "also save frames to a pcap",
+    },
+    Flag {
+        name: "--config",
+        short: None,
+        metavar: Some("FILE"),
+        help: "TOML instead of ./minitcp.toml",
+    },
+    Flag {
+        name: "--drop",
+        short: None,
+        metavar: Some("arp|icmp|ip"),
+        help: "ignore that kind of frame (comma-ok: arp,icmp)",
+    },
+    Flag {
+        name: "--drop-pct",
+        short: None,
+        metavar: Some("N"),
+        help: "drop N percent of frames at random (0-100)",
+    },
+    Flag {
+        name: "--ttl",
+        short: None,
+        metavar: Some("N"),
+        help: "hop count on MiniTCP's IPv4 replies (default: 64)",
+    },
+    Flag {
+        name: "--id",
+        short: None,
+        metavar: Some("N"),
+        help: "ICMP echo id on replies (default: copy from request)",
+    },
+    Flag {
+        name: "--count",
+        short: Some("-c"),
+        metavar: Some("N"),
+        help: "stop after N frames (stack/replay)",
+    },
+    Flag {
+        name: "--quiet",
+        short: Some("-q"),
+        metavar: None,
+        help: "one line per exchange",
+    },
+    Flag {
+        name: "--hex",
+        short: None,
+        metavar: None,
+        help: "read frames as hex on stdin",
+    },
+    Flag {
+        name: "--once",
+        short: None,
+        metavar: None,
+        help: "stop after one frame (same as --count 1)",
+    },
+    Flag {
+        name: "--offline",
+        short: None,
+        metavar: None,
+        help: "don't check GitHub for a newer minitcp",
+    },
+];
+
+/// Find a flag by either of its spellings.
+pub(super) fn lookup(flag: &str) -> Option<&'static Flag> {
+    FLAGS
+        .iter()
+        .find(|f| f.name == flag || f.short == Some(flag))
+}
+
+/// The long spelling of whatever the user typed, so everything downstream sees
+/// one name per flag.
+pub(super) fn canonical(flag: &str) -> &str {
+    lookup(flag).map_or(flag, |f| f.name)
+}
+
+/// Does this flag consume the word after it? Argv walking needs to know before
+/// it knows what the flag means.
+pub(super) fn takes_value(flag: &str) -> bool {
+    lookup(flag).is_some_and(|f| f.metavar.is_some())
+}
 
 pub(super) fn apply_flag(
     partial: &mut Partial,
@@ -37,7 +182,7 @@ pub(super) fn apply_flag(
         "--drop-pct" => set_drop_pct(partial, parse_count(need()?)?)?,
         "--ttl" => set_ttl(partial, parse_count(need()?)?)?,
         "--id" => set_icmp_id(partial, parse_count(need()?)?)?,
-        "-c" | "--count" => partial.count = Some(parse_count(need()?)?),
+        "--count" => partial.count = Some(parse_count(need()?)?),
         other => return Err(ParseError::msg(format!("unknown flag '{other}'"))),
     }
     Ok(())
