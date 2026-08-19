@@ -214,13 +214,12 @@ fn exposure_warning(bound: SocketAddr) -> Option<String> {
 /// stacks at once would steal frames from each other at random. The next client
 /// waits in the accept queue. A client hanging up is how a session normally
 /// ends, not an error.
-fn accept_loop(listener: TcpListener, tap: TapInterface) -> io::Result<()> {
+fn accept_loop(listener: TcpListener, mut tap: TapInterface) -> io::Result<()> {
     loop {
         let (stream, peer) = listener.accept()?;
         crate::log::status::info(format!("bridge client {peer}"));
         stream.set_nodelay(true)?;
-        let session = tap.try_clone()?;
-        match pump(session, stream) {
+        match pump(&mut tap, stream) {
             Ok(()) => {}
             Err(e) if client_gone(&e) => {
                 crate::log::status::info(format!("bridge client {peer} closed"));
@@ -230,57 +229,64 @@ fn accept_loop(listener: TcpListener, tap: TapInterface) -> io::Result<()> {
     }
 }
 
-fn pump(tap: TapInterface, stream: TcpStream) -> io::Result<()> {
+/// Carry frames both ways until either side hangs up.
+///
+/// Two threads, because a TAP read and a socket read both block. The reader
+/// gets its own duplicate of the TAP fd; the writer borrows the caller's, so a
+/// session costs one extra descriptor rather than two. The threads are scoped
+/// so that borrow is allowed to cross into them.
+fn pump(tap: &mut TapInterface, stream: TcpStream) -> io::Result<()> {
     let mut tap_read = tap.try_clone()?;
-    let mut tap_write = tap;
     let mut sock_read = stream.try_clone()?;
     let mut sock_write = stream.try_clone()?;
 
     let (wake_r, wake_w) = UnixStream::pair()?;
     wake_r.set_nonblocking(true)?;
 
-    let up = thread::spawn(move || -> io::Result<()> {
-        let mut buf = [0u8; 2048];
-        loop {
-            match poll_tap_or_stop(tap_read.as_raw_fd(), wake_r.as_raw_fd())? {
-                Wake::Stop => return Ok(()),
-                Wake::Tap => {
-                    let n = tap_read.read_frame(&mut buf)?;
-                    if n == 0 {
-                        return Ok(());
+    thread::scope(|scope| {
+        let up = scope.spawn(move || -> io::Result<()> {
+            let mut buf = [0u8; 2048];
+            loop {
+                match poll_tap_or_stop(tap_read.as_raw_fd(), wake_r.as_raw_fd())? {
+                    Wake::Stop => return Ok(()),
+                    Wake::Tap => {
+                        let n = tap_read.read_frame(&mut buf)?;
+                        if n == 0 {
+                            return Ok(());
+                        }
+                        write_record(&mut sock_write, &buf[..n])?;
                     }
-                    write_record(&mut sock_write, &buf[..n])?;
                 }
             }
-        }
-    });
-    let down = thread::spawn(move || -> io::Result<()> {
-        let _wake = wake_w;
-        let mut buf = [0u8; 2048];
-        loop {
-            let n = read_record(&mut sock_read, &mut buf)?;
-            if n == 0 {
-                return Ok(());
+        });
+        let down = scope.spawn(move || -> io::Result<()> {
+            let _wake = wake_w;
+            let mut buf = [0u8; 2048];
+            loop {
+                let n = read_record(&mut sock_read, &mut buf)?;
+                if n == 0 {
+                    return Ok(());
+                }
+                tap.write_frame(&buf[..n])?;
             }
-            tap_write.write_frame(&buf[..n])?;
+        });
+
+        while !up.is_finished() && !down.is_finished() {
+            thread::sleep(Duration::from_millis(20));
         }
-    });
+        let _ = stream.shutdown(Shutdown::Both);
 
-    while !up.is_finished() && !down.is_finished() {
-        thread::sleep(Duration::from_millis(20));
-    }
-    let _ = stream.shutdown(Shutdown::Both);
-
-    let up_res = match up.join() {
-        Ok(r) => r,
-        Err(_) => Err(io::Error::other("bridge tap->sock thread panicked")),
-    };
-    let down_res = match down.join() {
-        Ok(r) => r,
-        Err(_) => Err(io::Error::other("bridge sock->tap thread panicked")),
-    };
-    up_res?;
-    down_res
+        let up_res = match up.join() {
+            Ok(r) => r,
+            Err(_) => Err(io::Error::other("bridge tap->sock thread panicked")),
+        };
+        let down_res = match down.join() {
+            Ok(r) => r,
+            Err(_) => Err(io::Error::other("bridge sock->tap thread panicked")),
+        };
+        up_res?;
+        down_res
+    })
 }
 
 enum Wake {
