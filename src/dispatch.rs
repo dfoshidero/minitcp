@@ -1,9 +1,7 @@
 // One command in, one action out.
 //
-// Everything above this point is parsing and everything below it is doing;
-// this is the hinge. Keeping it in one `match` means the full list of what
-// minitcp can do is readable in a single screen, and nothing else in the
-// program has to know that commands exist.
+// Parsing above, doing below. One `match`, so the full list of what minitcp
+// can do reads in a single screen.
 
 use crate::cli::{self, Command, Config, HelpTopic};
 use crate::{AppError, log, release, stack, sys, tui};

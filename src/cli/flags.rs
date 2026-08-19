@@ -1,10 +1,8 @@
 // Turning one flag and its text into a value.
 //
-// `apply_flag` is the single table of every flag minitcp accepts: what it is
-// called, whether it takes a value, and what that value must look like. The
-// small parsers below it are shared with minitcp.toml, so `--addr 10.0.0.3` and
-// `addr = "10.0.0.3"` are validated by exactly the same code and cannot drift
-// apart.
+// `apply_flag` is the single table of every flag minitcp accepts. The parsers
+// below it are shared with minitcp.toml, so `--addr 10.0.0.3` and
+// `addr = "10.0.0.3"` cannot drift apart.
 
 use std::net::Ipv4Addr;
 use std::path::PathBuf;

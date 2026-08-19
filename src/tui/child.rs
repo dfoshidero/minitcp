@@ -5,10 +5,9 @@
 // deliberate — every pane is something you could have typed yourself, and the
 // pane title tells you the command.
 //
-// Stopping them is the subtle part. A capture running inside the sidecar has a
-// PID in the *container's* namespace, which means nothing on this host, so the
-// signal has to be sent back through `docker exec`. Getting that wrong would
-// mean signalling an unrelated process here.
+// Stopping them is the subtle part: a capture inside the sidecar has a PID in
+// the container's namespace, meaningless here, so the signal goes back through
+// `docker exec`.
 
 use std::io::Read;
 use std::os::unix::process::CommandExt;
@@ -60,45 +59,28 @@ pub(super) fn configure_child_process() -> std::io::Result<()> {
     Ok(())
 }
 
-/// Where the TAP device we want to watch actually lives.
+/// Where the TAP we want to watch lives — and so which machine runs tcpdump.
 ///
-/// The capture pane always shows the same thing — every frame on the wire, as
-/// seen by `tcpdump` — but *which machine* runs tcpdump depends on where the
-/// TAP is. A TAP is a kernel object, so it can only be sniffed from inside the
-/// kernel that owns it:
-///
-///   * on Linux, `minitcp tap up` makes tap0 a device on this host, so tcpdump
-///     runs here (as root, hence sudo).
-///   * everywhere else, tap0 lives in the sidecar container's network
-///     namespace. tcpdump has to run *in there*, which is what `docker exec`
-///     gives us. Sniffing on the host would show the container's port
-///     forwarding, not the frames on tap0.
-///
-/// Getting this wrong is not a difference in formatting — it is the difference
-/// between seeing traffic and seeing nothing at all.
+/// A TAP is a kernel object and can only be sniffed from inside the kernel that
+/// owns it. On the host that is us (as root); with the sidecar it is the
+/// container's network namespace, reached with `docker exec`. Sniffing the
+/// wrong one shows nothing at all.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum CaptureHost {
     Local,
     Sidecar,
 }
 
-/// How to stop a child we started.
-///
-/// Not every child can be stopped the same way, because not every child is ours
-/// to signal.
+/// How to stop a child we started — not every child is ours to signal.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Stop {
-    /// An ordinary child running as us. We signal its whole process group, so
-    /// any helpers it spawned go too.
+    /// An ordinary child running as us; signalled by process group.
     Group,
-    /// A root-owned tcpdump on this host. We cannot signal it as ourselves, so
-    /// we ask sudo to, naming the exact PID tcpdump reported (matching by name
-    /// could kill somebody else's capture).
+    /// A root-owned tcpdump here; sudo signals it by exact PID, since matching
+    /// by name could kill somebody else's capture.
     HostRoot,
-    /// A tcpdump inside the sidecar. Its PID is a number in the *container's*
-    /// PID namespace and means nothing here — signalling it on the host could
-    /// hit an unrelated process — so the signal is sent from inside the
-    /// container too.
+    /// A tcpdump inside the sidecar; its PID is only meaningful in the
+    /// container's namespace, so the signal is sent from in there too.
     InContainer,
 }
 
@@ -135,9 +117,8 @@ impl DumpFilter {
         }
     }
 
-    /// The command shown in the pane's title — the real one, including the
-    /// `docker exec` prefix when the capture is happening in the sidecar, so it
-    /// is obvious where the frames are coming from.
+    /// The command shown in the pane title, `docker exec` prefix and all, so
+    /// it is obvious where the frames come from.
     pub(super) fn title(self, iface: &str, host: CaptureHost) -> String {
         let prefix = match host {
             CaptureHost::Local => String::new(),
@@ -179,10 +160,8 @@ impl ChildProc {
 
     /// Start the capture, wherever the TAP happens to be.
     ///
-    /// Both variants run the same tcpdump; only the wrapper differs. Either
-    /// wrapper can put tcpdump behind a monitor process — `sudo` does, and so
-    /// does `docker exec` — so the process we spawn is *not* the process we
-    /// will later need to signal. The shell prints its own PID before `exec`
+    /// Both wrappers put tcpdump behind a monitor process, so what we spawn is
+    /// not what we later signal. The shell prints its own PID before `exec`
     /// replaces it with tcpdump, which gives us the real one.
     pub(super) fn spawn_dump(
         filter: DumpFilter,
@@ -239,8 +218,8 @@ impl ChildProc {
         })
     }
 
-    /// A placeholder for a child that could not be started, so the rest of the
-    /// UI has something to hold and does not need to special-case `None`.
+    /// A placeholder for a child that never started, so the UI holds no
+    /// `Option`.
     pub(super) fn not_running() -> Self {
         Self {
             child: None,
@@ -327,9 +306,8 @@ impl ChildProc {
                 Stop::Group => unsafe {
                     libc::kill(-pid, libc::SIGTERM);
                 },
-                // Ask politely first, then insist. Killing the wrapper we
-                // spawned is not enough: tcpdump outlives it, and on the next
-                // `t` we would be competing with a capture nobody can see.
+                // Ask politely, then insist. Killing only the wrapper leaves
+                // tcpdump alive and invisible.
                 Stop::HostRoot | Stop::InContainer => {
                     if let Some(command_pid) = self.command_pid {
                         signal_elsewhere(self.stop, command_pid, "TERM");
@@ -348,10 +326,8 @@ impl ChildProc {
     }
 }
 
-/// Explain why a capture could not even be started.
-///
-/// Both wrappers fail for boring, fixable reasons, and the raw OS error
-/// ("No such file or directory") names neither the cause nor the fix.
+/// Explain why a capture could not start — the raw OS error ("No such file or
+/// directory") names neither the cause nor the fix.
 pub(super) fn explain_dump_failure(host: CaptureHost, error: std::io::Error) -> std::io::Error {
     if error.kind() != std::io::ErrorKind::NotFound {
         return error;
@@ -384,12 +360,9 @@ pub(super) fn explain_no_pid(host: CaptureHost) -> &'static str {
     }
 }
 
-/// Send a signal to a process we cannot signal ourselves.
-///
-/// `Stop::HostRoot` borrows root's authority via sudo. `Stop::InContainer`
-/// borrows the container's *PID namespace* via docker exec — the PID is
-/// meaningless outside it, so the signal has to be sent from inside. `kill` is
-/// a shell builtin, so this needs nothing installed in the image.
+/// Signal a process we cannot signal ourselves: sudo borrows root's authority,
+/// docker exec borrows the container's PID namespace. `kill` is a shell
+/// builtin, so the image needs nothing installed.
 pub(super) fn signal_elsewhere(stop: Stop, pid: i32, signal: &str) {
     let flag = format!("-{signal}");
     let pid = pid.to_string();
@@ -427,17 +400,13 @@ pub(super) fn read_dump_pid(stdout: &mut std::process::ChildStdout) -> Option<i3
     marker.strip_prefix(PREFIX)?.trim().parse().ok()
 }
 
-/// Wait, briefly, for a process to actually be gone.
-///
-/// Signals are asynchronous: `kill` returning says the signal was delivered,
-/// not that the process has died. Checking costs almost nothing on this host
-/// (`/proc/PID` either exists or does not), but each check inside the container
-/// is a whole `docker exec`, so that side is polled far less often.
+/// Wait, briefly, for a process to actually be gone — a delivered signal is
+/// not a dead process. Checking `/proc/PID` here is free; each check inside the
+/// container is a whole `docker exec`, so that side is polled far less.
 pub(super) fn wait_for_exit(stop: Stop, pid: i32, timeout: Duration) -> bool {
     let (interval, alive): (Duration, &dyn Fn() -> bool) = match stop {
         Stop::InContainer => (Duration::from_millis(100), &|| {
-            // `kill -0` sends no signal; it only asks "does this exist, and
-            // may I signal it?".
+            // `kill -0` sends no signal; it only asks whether the PID is there.
             let pid = pid.to_string();
             crate::sys::process::output_timeout(
                 "docker",
@@ -467,11 +436,8 @@ impl Drop for ChildProc {
     }
 }
 
-/// Start a capture, and if it fails immediately, try once more.
-///
-/// The retry is for a genuine race at startup: the sidecar's port is accepting
-/// connections a moment before `docker exec` will work, and a previous
-/// tcpdump's exit is not always instant.
+/// Start a capture, retrying once: the sidecar accepts connections a moment
+/// before `docker exec` works, and a previous tcpdump's exit is not instant.
 pub(super) fn spawn_dump_with_retry(
     filter: DumpFilter,
     iface: &str,
@@ -507,9 +473,7 @@ mod tests {
 
     #[test]
     fn a_sidecar_tap_is_captured_inside_the_container() {
-        // The whole point of the fix: when tap0 lives in the sidecar's network
-        // namespace, running tcpdump on the host would show nothing, because
-        // the device is not there to sniff.
+        // tap0 in the sidecar's namespace is not there to sniff from here.
         assert_eq!(
             DumpFilter::Arp.title("tap0", CaptureHost::Sidecar),
             "docker exec minitcp-tap tcpdump -eni tap0 -l arp"
@@ -542,8 +506,7 @@ mod tests {
         let sidecar = explain_dump_failure(CaptureHost::Sidecar, missing()).to_string();
         assert!(sidecar.contains("docker"), "{sidecar}");
 
-        // Anything that is not a missing program is somebody else's problem and
-        // must not be rewritten into a misleading explanation.
+        // Only a missing program gets rewritten; anything else stays verbatim.
         let other = std::io::Error::other("disk on fire");
         assert_eq!(
             explain_dump_failure(CaptureHost::Local, other).to_string(),

@@ -6,9 +6,8 @@
 //   keys    what each keystroke does
 //   draw    turning that state into a screen
 //
-// The UI implements no protocol logic at all. It shells out to the same
-// commands a user could type, which is what makes the panes trustworthy: what
-// you see is what those commands printed.
+// The UI implements no protocol logic. It shells out to the same commands a
+// user could type, so every pane shows what those commands printed.
 
 mod app;
 mod buffer;

@@ -1,10 +1,8 @@
 // Record everything that crosses the wire, without changing what crosses it.
 //
 // `CaptureIo` wraps any other carrier and tees both directions into a pcap
-// file, so `--write out.pcap` produces something Wireshark can open. Frames
-// still go where they were going; this only listens in. With no writer
-// attached it is pure pass-through, which is why the stack can wrap
-// unconditionally and not care whether --write was given.
+// file for `--write out.pcap`. With no writer attached it is pure pass-through,
+// so the stack can wrap unconditionally.
 
 use std::io;
 

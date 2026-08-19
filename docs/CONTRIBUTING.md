@@ -18,6 +18,17 @@ PRs build `linux/amd64` only. Pushes to `main` also build `linux/arm64` on a nat
 
 Release notes go on GitHub Releases (`feat` / `fix` / breaking only). After a release, CI opens a `docs:` PR that only updates [CHANGELOG.md](CHANGELOG.md) and marks the required checks green (Actions cannot start a second workflow with `GITHUB_TOKEN`). Merge that PR to keep the file in sync. Squash-merge feature PRs if you want `(#PR)` in the entry.
 
+## Comments
+
+minitcp is a teaching tool, so the protocol code carries the teaching. Everything else gets ordinary doc comments.
+
+- `src/proto/`, `src/stack/handle.rs`, and the wire formats in `src/interface/` — explain the format, the field, and why a packet looks the way it does. Prose and diagrams belong here.
+- Everywhere else (`src/cli/`, `src/sys/`, `src/tui/`, `src/log/`, `src/release/`) — a one-line `///` saying what the item is. Add a second sentence only when the code would otherwise be "corrected" back: a locale pin, a signal sent through `docker exec`, an error we deliberately swallow.
+- Module headers are a couple of lines, plus a map of child modules where there are any.
+- Tests are documented by their names. A comment in a test body means the assertion encodes a rule the name cannot carry.
+
+If a comment restates the line under it, delete it.
+
 ## Development
 
 Work in the Dev Container (see the README). Parser tests do not need TAP:

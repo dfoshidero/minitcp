@@ -34,12 +34,9 @@ impl Pane {
     }
 }
 
-/// One line of output, from wherever it came from.
-///
-/// Children are read on background threads and their output arrives here, so
-/// the UI never blocks waiting on a process. `StackStatus` is separate from
-/// `Stack` because the stack's stderr is minitcp talking about itself and gets
-/// coloured differently from the protocol trace on stdout.
+/// One line of output, from wherever it came from. `StackStatus` is separate
+/// from `Stack` because stderr is minitcp talking about itself, and is coloured
+/// differently from the protocol trace on stdout.
 pub(super) enum Msg {
     Stack(String),
     StackStatus(String),
@@ -50,8 +47,7 @@ pub(super) enum Msg {
 pub(super) struct Lab {
     pub(super) focus: Pane,
     pub(super) filter: DumpFilter,
-    /// Which machine runs tcpdump for the capture pane. Fixed for the life of
-    /// the lab, because the transport it is derived from is too.
+    /// Which machine runs tcpdump; fixed for the life of the lab.
     pub(super) capture: CaptureHost,
     pub(super) stack_buf: Buffer,
     pub(super) dump_buf: Buffer,
@@ -75,14 +71,11 @@ pub(super) struct Lab {
     pub(super) arp_out: u32,
 }
 
-/// Report whether the local TAP is there, without touching it.
+/// Report whether the TAP is there, without touching it.
 ///
-/// Opening the lab deliberately does *not* create the TAP. Bringing up a
-/// virtual network device is a real change to the machine — it needs root, and
-/// it outlives the program that made it — so it stays an explicit thing the
-/// user asks for with `minitcp tap up`. It is also the step worth
-/// understanding: a lab that quietly conjures its own wire teaches nothing
-/// about where the wire came from.
+/// Opening the lab deliberately does not create it: a virtual network device
+/// needs root and outlives the program that made it, so it stays something the
+/// user asks for with `minitcp tap up`.
 pub(super) fn report_tap_status(cfg: &Config, tx: &Sender<Msg>) {
     if !cfg.tun.exists() {
         let _ = tx.send(Msg::Action(format!(
@@ -200,10 +193,8 @@ pub(super) fn run_short(tx: &Sender<Msg>, program: &str, args: &[&str]) {
 impl Lab {
     pub(super) fn start(mut cfg: Config) -> std::io::Result<Self> {
         let (tx, rx) = mpsc::channel();
-        // Decide the transport once, here, and pin it into the config. The
-        // child `minitcp stack` inherits our flags, so if we left it to decide
-        // for itself it could reach a different answer — and then the lab would
-        // be watching one TAP while the stack talked to another.
+        // Decide the transport once and pin it into the config the child
+        // inherits, or the lab could watch one TAP while the stack uses another.
         let remote = match cfg.transport() {
             Transport::Forwarded(addr) => {
                 cfg.fwd = Some(addr);
@@ -220,10 +211,8 @@ impl Lab {
         attach_child(&mut stack, tx.clone(), Msg::Stack, Msg::StackStatus);
 
         let filter = DumpFilter::All;
-        // The capture follows the TAP. When frames are being forwarded from the
-        // sidecar, tap0 is a device in *its* network namespace, so that is where
-        // tcpdump has to run — otherwise the pane sits empty while traffic
-        // flows perfectly well.
+        // The capture follows the TAP: forwarding means tap0 lives in the
+        // sidecar's namespace, so tcpdump has to run in there.
         let capture = if remote {
             CaptureHost::Sidecar
         } else {

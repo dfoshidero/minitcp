@@ -1,10 +1,8 @@
 // One scrollback pane's worth of text.
 //
-// Two ideas make this more than a Vec of strings. It is capped, so a lab left
-// running overnight cannot eat memory. And it distinguishes *following* the
-// output from *looking at* it: scroll up and new lines stop yanking the view
-// away, which is the difference between being able to read what just happened
-// and watching it scroll past.
+// Capped, so a lab left running overnight cannot eat memory; and it separates
+// following the output from looking at it, so scrolling up is not undone by
+// the next line to arrive.
 
 use std::collections::VecDeque;
 

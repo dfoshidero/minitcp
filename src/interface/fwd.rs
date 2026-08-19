@@ -15,13 +15,11 @@ pub const DEFAULT_FWD: &str = "127.0.0.1:7946";
 
 /// Where the bridge listens unless told otherwise.
 ///
-/// Loopback, deliberately. This socket hands out raw Ethernet frames on a TAP
-/// with no authentication of any kind: anyone who can connect can inject frames
-/// onto that link and read everything crossing it. The sidecar overrides this
-/// with `0.0.0.0` because inside a container that *is* loopback in effect — the
-/// `docker run` line publishes the port only on 127.0.0.1, so the container's
-/// namespace is the boundary. Run by hand on a real host, `0.0.0.0` would be
-/// an open door, so it is not what you get by default.
+/// Loopback, deliberately: this socket hands out raw Ethernet frames with no
+/// authentication, so anyone who can connect can inject onto the link and read
+/// everything crossing it. The sidecar overrides it with `0.0.0.0` because the
+/// `docker run` line publishes the port on 127.0.0.1 only, making the
+/// container's namespace the boundary.
 pub const DEFAULT_LISTEN: &str = "127.0.0.1:7946";
 
 const CONNECT_RETRY: Duration = Duration::from_secs(8);
@@ -192,12 +190,9 @@ pub fn run_bridge(listen: &str, tap: TapInterface) -> io::Result<()> {
 
 /// Warn if this bridge is reachable from outside the machine.
 ///
-/// Binding beyond loopback is allowed — that is exactly what the sidecar does,
-/// and it may be what somebody genuinely wants on a private lab network — but
-/// it is never something to do by accident, so it is always said out loud.
-///
-/// The check is on the address we *actually* bound, not the string asked for,
-/// so `0.0.0.0`, `::`, and a specific LAN address are all caught the same way.
+/// Binding beyond loopback is allowed — the sidecar does it — but never by
+/// accident. The check is on the address actually bound, not the string asked
+/// for, so `0.0.0.0`, `::` and a LAN address are all caught the same way.
 fn exposure_warning(bound: SocketAddr) -> Option<String> {
     if bound.ip().is_loopback() {
         return None;
@@ -212,15 +207,10 @@ fn exposure_warning(bound: SocketAddr) -> Option<String> {
 
 /// Serve one host stack at a time, forever.
 ///
-/// Deliberately serial. A TAP delivers each frame to exactly one reader, so two
-/// stacks connected at once would not both see the traffic — they would steal
-/// frames from each other at random, and the resulting "my ping vanished
-/// sometimes" is about the worst thing to hand someone learning networking.
-/// While one client is connected, the next sits in the kernel's accept queue
-/// and is served the moment the first disconnects.
-///
-/// A client hanging up is the normal way a session ends (the user quit the
-/// lab), so it is reported and waited on again rather than treated as an error.
+/// Deliberately serial: a TAP delivers each frame to exactly one reader, so two
+/// stacks at once would steal frames from each other at random. The next client
+/// waits in the accept queue. A client hanging up is how a session normally
+/// ends, not an error.
 fn accept_loop(listener: TcpListener, tap: TapInterface) -> io::Result<()> {
     loop {
         let (stream, peer) = listener.accept()?;
@@ -336,8 +326,8 @@ mod tests {
     #[test]
     fn a_zero_length_prefix_is_corruption_not_a_disconnect() {
         // Ok(0) is how the read loop learns the peer went away. If a zero
-        // length prefix also produced Ok(0), one desynchronised byte would end
-        // the session and look like the sidecar had simply been stopped.
+        // length prefix also produced it, one desynchronised byte would end the
+        // session looking like a tidy disconnect.
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let handle = thread::spawn(move || {
@@ -355,8 +345,8 @@ mod tests {
 
     #[test]
     fn the_bridge_keeps_to_itself_by_default() {
-        // If this ever changes, an unauthenticated raw-frame socket becomes
-        // reachable from the network the moment someone runs `minitcp bridge`.
+        // Change this and `minitcp bridge` puts an unauthenticated raw-frame
+        // socket on the network.
         let addr: SocketAddr = DEFAULT_LISTEN.parse().unwrap();
         assert!(addr.ip().is_loopback(), "{DEFAULT_LISTEN}");
         assert!(exposure_warning(addr).is_none());

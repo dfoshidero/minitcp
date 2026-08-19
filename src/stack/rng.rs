@@ -1,10 +1,8 @@
 // A tiny deterministic random number generator, for `--drop-pct`.
 //
-// This is xorshift64*: three shifts and a multiply. It is nowhere near good
-// enough for anything security-related, and that is fine — the only question
-// being asked is "should this frame vanish?", and the whole point of a lab is
-// that you can seed it and get the same run twice. Pulling in a real RNG crate
-// would add a dependency to answer a question a dozen lines already answer.
+// xorshift64*: three shifts and a multiply. Nowhere near good enough for
+// anything security-related, which is fine — the question is only "should this
+// frame vanish?", and a seed makes the same run repeatable.
 
 pub struct SeededRng {
     state: u64,

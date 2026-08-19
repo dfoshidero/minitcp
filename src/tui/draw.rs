@@ -1,9 +1,8 @@
 // Turning the lab's state into a screen.
 //
-// Nothing here changes anything: `draw` reads `Lab` and emits widgets. Colour
-// carries meaning rather than decoration — green for what arrived, cyan for
-// what we sent, red for a problem — so a glance at the pane tells you the
-// direction of traffic without reading the words.
+// Nothing here mutates: `draw` reads `Lab` and emits widgets. Colour carries
+// meaning — green arrived, cyan sent, red a problem — so direction of traffic
+// is legible without reading the words.
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -196,8 +195,8 @@ pub(super) fn draw(frame: &mut Frame, lab: &mut Lab) {
         stack_focused,
         PaneRole::MiniTcpCore,
     );
-    // Name where the capture is running. Two people with the same screen open
-    // can be sniffing two different kernels, and that is worth saying out loud.
+    // Name where the capture runs: the same screen can be sniffing a different
+    // kernel on someone else's machine.
     let capture_title = match lab.capture {
         CaptureHost::Local => "2 TAP Capture (this host)",
         CaptureHost::Sidecar => "2 TAP Capture (sidecar)",
