@@ -10,7 +10,7 @@
 // ICMP, TCP and UDP are drawn indented under the IPv4 line they arrived in —
 // they have no addresses of their own, they borrow the packet's.
 
-use super::{emit_protocol_line, timestamp};
+use super::emit_protocol_line;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Verb {
@@ -31,17 +31,19 @@ impl Verb {
     }
 }
 
-pub struct Event<'a> {
-    pub show_time: bool,
-    pub verb: Verb,
-    pub layer: &'a str,
-    pub osi: &'a str,
-    pub address: &'a str,
-    pub reason: &'a str,
+/// One trace line before it is rendered. Private to this module: callers say
+/// `emit_at`/`emit_cont`/`emit_inside`, which name the shape of the line.
+struct Event<'a> {
+    show_time: bool,
+    verb: Verb,
+    layer: &'a str,
+    osi: &'a str,
+    address: &'a str,
+    reason: &'a str,
 }
 
 impl<'a> Event<'a> {
-    pub fn format_with(&self, when: &str) -> String {
+    fn format_with(&self, when: &str) -> String {
         let when_col = if self.show_time {
             when.to_string()
         } else {
@@ -61,13 +63,9 @@ impl<'a> Event<'a> {
         )
     }
 
-    pub fn emit_at(&self, when: &str) {
+    fn emit(&self, when: &str) {
         emit_protocol_line(&self.format_with(when));
     }
-}
-
-pub fn now() -> String {
-    timestamp()
 }
 
 /// One-line quiet summary: time, layer, addresses, reason. No IN/OUT.
@@ -88,7 +86,7 @@ pub fn emit_at(when: &str, verb: Verb, layer: &str, osi: &str, address: &str, re
         address,
         reason,
     }
-    .emit_at(when);
+    .emit(when);
 }
 
 pub fn emit_cont(when: &str, verb: Verb, layer: &str, osi: &str, address: &str, reason: &str) {
@@ -100,7 +98,7 @@ pub fn emit_cont(when: &str, verb: Verb, layer: &str, osi: &str, address: &str, 
         address,
         reason,
     }
-    .emit_at(when);
+    .emit(when);
 }
 
 /// Protocol carried inside IPv4 (ICMP, UDP, TCP). Tree-child of the ipv4 line.
@@ -114,7 +112,7 @@ pub fn emit_inside(when: &str, verb: Verb, layer: &str, osi: &str, reason: &str)
         address: "",
         reason,
     }
-    .emit_at(when);
+    .emit(when);
 }
 
 #[cfg(test)]

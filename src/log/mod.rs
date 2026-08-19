@@ -13,7 +13,7 @@ pub mod trace;
 use std::io::{self, Write};
 use std::sync::Mutex;
 
-pub use trace::{Verb, emit_at, emit_cont, emit_inside, emit_quiet, now};
+pub use trace::{Verb, emit_at, emit_cont, emit_inside, emit_quiet};
 
 static OUTPUT_ERROR: Mutex<Option<io::Error>> = Mutex::new(None);
 

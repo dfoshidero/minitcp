@@ -67,7 +67,7 @@ pub(super) fn handle_frame(cfg: &Config, bytes: &[u8], rng: &mut SeededRng) -> O
     let verbose = cfg.verbose;
     let our_ip = cfg.addr;
     let our_mac = cfg.mac;
-    let when = log::now();
+    let when = log::timestamp();
 
     let frame = match EthernetFrame::parse(bytes) {
         Ok(frame) => frame,
