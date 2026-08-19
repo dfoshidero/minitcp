@@ -1,3 +1,19 @@
+# [1.3.0](https://github.com/dfoshidero/minitcp/compare/v1.2.1...v1.3.0) (2026-08-19)
+
+
+### Bug Fixes
+
+* fail cleanly instead of panicking or swallowing TAP and Docker errors ([#8](https://github.com/dfoshidero/minitcp/issues/8)) ([4f4df0b](https://github.com/dfoshidero/minitcp/commit/4f4df0bf29f4babf5a6771b7ef4396a0bf7b04d8))
+* report runtime failures as minitcp errors instead of panics ([3bbf100](https://github.com/dfoshidero/minitcp/commit/3bbf10091c0a6cb219c1138ef0cad08bbfa5c021))
+* restore the TUI and stop children on SIGTERM/SIGHUP ([47366c6](https://github.com/dfoshidero/minitcp/commit/47366c682f5c2697ed528ead2c976dd6cf83d8e4))
+* retry flaky Docker, TAP, and install I/O ([c3e90b5](https://github.com/dfoshidero/minitcp/commit/c3e90b5f092c0afe5db9a151ee55850e27946b7e))
+* surface TAP, Docker, and subprocess failures instead of swallowing them ([aaf2d57](https://github.com/dfoshidero/minitcp/commit/aaf2d571ef0664c885f5f378fb7962b8cd1f076e))
+
+
+### Features
+
+* add --version and document 0/1/2 exit codes ([e11fac6](https://github.com/dfoshidero/minitcp/commit/e11fac6c4b8f229899d5f52049cbf4901474ae15))
+
 ## [1.2.1](https://github.com/dfoshidero/minitcp/compare/v1.2.0...v1.2.1) (2026-08-19)
 
 
