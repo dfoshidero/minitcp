@@ -72,6 +72,16 @@ Short meanings for words MiniTCP uses. Comments in the code show *where* we appl
 
 **Userspace** — Our Rust process, not the kernel. Linux already has a TCP/IP stack; MiniTCP is a second stack talking over TAP.
 
+## Captures
+
+**pcap** — A recording of Ethernet frames on disk. Think of a tape of the cable: one global header ("these records are Ethernet"), then each frame with a timestamp and length. tcpdump and Wireshark use this format. MiniTCP writes it with `--write` and plays it with `replay` so you can test without TAP.
+
+**pcap global header** — 24 bytes at the start of the file. MiniTCP expects little-endian magic `0xa1b2c3d4`, version 2.4, and link type `1` (Ethernet).
+
+**pcap record** — One saved frame: timestamp, how many bytes were stored (`incl_len`), original length on the wire, then the bytes.
+
+**Hex frame** — One Ethernet frame written as hex digits on a line (spaces allowed). `stack --hex` reads these from stdin; useful for pasting a single packet.
+
 ## Byte order and bit tricks
 
 **Big-endian / network order** — Multi-byte numbers on the wire put the high byte first. `u16::from_be_bytes([0x08, 0x00])` is `0x0800`. Your CPU might store the opposite internally; we convert at the edge.

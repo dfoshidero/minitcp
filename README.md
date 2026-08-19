@@ -176,6 +176,18 @@ drop = ["icmp"]
 
 Docker: mount the file into `/home/netstack` (the image workdir).
 
+## Pcap (record and replay)
+
+A **pcap** is a file of Ethernet frames, the same format tcpdump and Wireshark use. MiniTCP can record live TAP traffic and later replay it without `/dev/net/tun` (useful in CI).
+
+```bash
+minitcp stack --write out.pcap -q    # record while pinging in another terminal
+minitcp pcap-info out.pcap           # list each frame's EtherType
+minitcp replay out.pcap -q           # feed those frames to the stack again
+```
+
+`--write` also works with `replay`. Terms: [GLOSSARY.md](docs/GLOSSARY.md) (pcap). Implementation: `src/interface/pcap.rs`.
+
 ### Manual three-terminal workflow
 
 Use this if you want to inspect each command without the lab.
@@ -266,7 +278,7 @@ IPv4 notes that are easy to miss:
 - `docker/Dockerfile` — published lab image (`ghcr.io/dfoshidero/minitcp`). The Dev Container image is `.devcontainer/Dockerfile`.
 - `scripts/setup-tap.sh` — manually create and bring up `tap0`; the lab does this automatically.
 - `src/main.rs` — command dispatcher: terminal lab by default, `stack`, `replay`, `pcap-info`.
-- `src/cli.rs` — flags, `minitcp.toml`, and `--help`.
+- `src/cli/` — flags, `minitcp.toml`, `--help`, and parse errors.
 - `src/stack.rs` — frame loop: TAP, pcap, or hex; dispatch to a protocol; write a reply.
 - `src/log.rs` — quiet one-liner, or verbose `[IN]` / `[OUT]` / `[..]` peel.
 - `src/tui/` — terminal UI: split panes, child processes, key actions, and scrollback.
