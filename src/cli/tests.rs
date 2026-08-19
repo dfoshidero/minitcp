@@ -218,6 +218,22 @@ fn a_missing_argument_says_what_was_missing() {
 }
 
 #[test]
+fn two_frame_sources_are_refused() {
+    for argv in [
+        vec!["replay", "in.pcap", "--hex"],
+        vec!["replay", "in.pcap", "--fwd", "127.0.0.1:7946"],
+        vec!["--hex", "--fwd", "127.0.0.1:7946"],
+    ] {
+        let err = parse_err(&argv);
+        assert!(err.contains("where frames come from"), "{argv:?}: {err}");
+    }
+    // One source at a time is still fine.
+    parse_ok(&["--hex"]);
+    parse_ok(&["--fwd", "127.0.0.1:7946"]);
+    parse_ok(&["replay", "in.pcap"]);
+}
+
+#[test]
 fn pcap_and_replay_parse() {
     let cfg = parse_ok(&["pcap", "out.pcap"]);
     assert_eq!(cfg.command, Command::Pcap(PathBuf::from("out.pcap")));

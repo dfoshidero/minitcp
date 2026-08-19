@@ -31,6 +31,29 @@ fn is_setter(command: &Command) -> bool {
     )
 }
 
+/// Frames reach the stack from exactly one place. Naming two is refused here
+/// rather than in `run_stack`, which would otherwise silently honour whichever
+/// source it happens to test first.
+fn one_frame_source(command: &Command, cli: &Partial) -> Result<(), ParseError> {
+    let mut named = Vec::new();
+    if matches!(command, Command::Replay(_)) {
+        named.push("replay FILE");
+    }
+    if cli.hex == Some(true) {
+        named.push("--hex");
+    }
+    if cli.fwd.is_some() {
+        named.push("--fwd");
+    }
+    if named.len() > 1 {
+        return Err(ParseError::msg(format!(
+            "{} name where frames come from; pick one",
+            named.join(" and ")
+        )));
+    }
+    Ok(())
+}
+
 /// Parse argv without the program name. `cwd` is where `./minitcp.toml` is sought.
 pub fn parse_from(args: &[String], cwd: &Path) -> Result<Config, ParseError> {
     let cli = args::parse_cli(args)?;
@@ -70,7 +93,8 @@ pub fn parse_from(args: &[String], cwd: &Path) -> Result<Config, ParseError> {
         cfg.linux_addr = default_linux_addr(cfg.addr);
     }
     cfg.config_path = config_path;
-    cfg.command = cli.command.unwrap_or(Command::Run);
+    cfg.command = cli.command.clone().unwrap_or(Command::Run);
+    one_frame_source(&cfg.command, &cli)?;
     Ok(cfg)
 }
 
