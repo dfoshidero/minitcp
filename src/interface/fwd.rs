@@ -124,15 +124,25 @@ impl FrameIo for TcpFrames {
     }
 }
 
+/// Read one length-prefixed frame: four big-endian length bytes, then the frame.
+///
+/// `Ok(0)` means the peer closed the connection, and nothing else. A length
+/// prefix of zero is *not* the same thing — the caller stops on 0, so treating
+/// a zero-length record as a close would let one corrupt prefix end the session
+/// while looking like a tidy disconnect.
 fn read_record(stream: &mut TcpStream, buffer: &mut [u8]) -> io::Result<usize> {
     let mut len_buf = [0u8; 4];
     if stream.read(&mut len_buf[..1])? == 0 {
         return Ok(0);
     }
+    // Part of a length prefix arrived, so the rest of it must follow.
     stream.read_exact(&mut len_buf[1..])?;
     let n = u32::from_be_bytes(len_buf) as usize;
     if n == 0 {
-        return Ok(0);
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "forwarded frame claims zero bytes; the link is out of step",
+        ));
     }
     if n > MAX_FRAME {
         return Err(io::Error::new(
@@ -198,6 +208,17 @@ fn exposure_warning(bound: SocketAddr) -> Option<String> {
     ))
 }
 
+/// Serve one host stack at a time, forever.
+///
+/// Deliberately serial. A TAP delivers each frame to exactly one reader, so two
+/// stacks connected at once would not both see the traffic — they would steal
+/// frames from each other at random, and the resulting "my ping vanished
+/// sometimes" is about the worst thing to hand someone learning networking.
+/// While one client is connected, the next sits in the kernel's accept queue
+/// and is served the moment the first disconnects.
+///
+/// A client hanging up is the normal way a session ends (the user quit the
+/// lab), so it is reported and waited on again rather than treated as an error.
 fn accept_loop(listener: TcpListener, tap: TapInterface) -> io::Result<()> {
     loop {
         let (stream, peer) = listener.accept()?;
@@ -309,6 +330,26 @@ mod tests {
     use std::fs::File;
     use std::os::fd::OwnedFd;
     use std::time::Duration;
+
+    #[test]
+    fn a_zero_length_prefix_is_corruption_not_a_disconnect() {
+        // Ok(0) is how the read loop learns the peer went away. If a zero
+        // length prefix also produced Ok(0), one desynchronised byte would end
+        // the session and look like the sidecar had simply been stopped.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream.write_all(&0u32.to_be_bytes()).unwrap();
+            // Hold the connection open, so a genuine close cannot be the cause.
+            thread::sleep(Duration::from_millis(200));
+        });
+
+        let mut frames = TcpFrames::connect(&addr.to_string()).unwrap();
+        let error = frames.read_frame(&mut [0u8; 2048]).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        handle.join().unwrap();
+    }
 
     #[test]
     fn the_bridge_keeps_to_itself_by_default() {
