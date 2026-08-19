@@ -53,3 +53,4 @@ case ":$PATH:" in
     echo "minitcp: add this to your shell rc:  export PATH=\"$DEST_DIR:\$PATH\""
     ;;
 esac
+"$DEST_DIR/minitcp" --help

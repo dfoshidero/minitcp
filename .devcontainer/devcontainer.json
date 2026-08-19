@@ -6,7 +6,7 @@
     "containerUser": "netstack",
     "remoteUser": "netstack",
     "updateRemoteUserUID": false,
-    "postCreateCommand": "sudo chown -R \"$(id -u):$(id -g)\" \"${containerWorkspaceFolder}\" && cargo install --path \"${containerWorkspaceFolder}\"",
+    "postCreateCommand": "sudo chown -R \"$(id -u):$(id -g)\" \"${containerWorkspaceFolder}\" && cargo install --path \"${containerWorkspaceFolder}\" && minitcp --help",
     "features": {
         "ghcr.io/devcontainers/features/rust:1": {}
     },
