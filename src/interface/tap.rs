@@ -53,12 +53,14 @@ impl TapInterface {
 
         Ok(Self { file })
     }
+}
 
-    pub fn read_frame(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+impl crate::interface::FrameIo for TapInterface {
+    fn read_frame(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
         self.file.read(buffer)
     }
 
-    pub fn write_frame(&mut self, frame: &[u8]) -> io::Result<()> {
+    fn write_frame(&mut self, frame: &[u8]) -> io::Result<()> {
         self.file.write_all(frame)
     }
 }

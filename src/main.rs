@@ -24,10 +24,10 @@ fn main() -> std::io::Result<()> {
             Ok(())
         }
         cli::Command::Run => tui::run_lab(cfg),
-        cli::Command::Stack => stack::run_stack(cfg),
-        cli::Command::Replay(_) | cli::Command::PcapInfo(_) => {
-            eprintln!("minitcp: pcap commands are not wired yet");
-            std::process::exit(2);
+        cli::Command::Stack | cli::Command::Replay(_) => stack::run_stack(cfg),
+        cli::Command::PcapInfo(path) => {
+            print!("{}", crate::interface::pcap::pcap_info(&path)?);
+            Ok(())
         }
     }
 }
