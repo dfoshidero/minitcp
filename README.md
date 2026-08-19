@@ -4,9 +4,9 @@ A small userspace TCP/IP stack in Rust. Linux keeps its stack on one side of a v
 
 Linux owns `10.0.0.1` on TAP interface `tap0`. MiniTCP pretends to be another machine at `10.0.0.2` with MAC `02:00:00:00:00:02`.
 
-Licensed under [MIT](LICENSE). Pull requests: [CONTRIBUTING.md](CONTRIBUTING.md).
+Licensed under [MIT](LICENSE). Pull requests: [CONTRIBUTING.md](docs/CONTRIBUTING.md).
 
-Terms used in the code are defined in [GLOSSARY.md](GLOSSARY.md).
+Terms used in the code are defined in [GLOSSARY.md](docs/GLOSSARY.md).
 
 ## Run with Docker
 
@@ -235,7 +235,7 @@ IPv4 notes that are easy to miss:
 
 ## Layout
 
-- `GLOSSARY.md` — short definitions of terms the code uses.
+- `docs/GLOSSARY.md` — short definitions of terms the code uses.
 - `Dockerfile` — published lab image (`ghcr.io/dfoshidero/minitcp`). The Dev Container image is `.devcontainer/Dockerfile`.
 - `setup-tap.sh` — manually create and bring up `tap0`; the lab does this automatically.
 - `src/main.rs` — command dispatcher: terminal lab by default, raw stack with `stack`.
