@@ -1,3 +1,10 @@
+## [1.1.1](https://github.com/dfoshidero/minitcp/compare/v1.1.0...v1.1.1) (2026-08-19)
+
+
+### Bug Fixes
+
+* print help after the Docker lab shell starts ([69460f3](https://github.com/dfoshidero/minitcp/commit/69460f30b8ba33957f6506fd7a70066156a1d8d4))
+
 ## [1.0.2](https://github.com/dfoshidero/minitcp/compare/v1.0.1...v1.0.2) (2026-08-19)
 
 
