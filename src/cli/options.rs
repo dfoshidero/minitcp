@@ -1,43 +1,25 @@
+// Everything a run of minitcp is configured by, and where each value came from.
+//
+// Three layers, lowest first: built-in defaults, then minitcp.toml, then the
+// command line. `Partial` is one layer with holes in it — every field optional,
+// so "not mentioned" is distinguishable from "set to the default" — and
+// `apply_partial` lays one over another. That is the whole precedence rule, in
+// one place, rather than scattered `unwrap_or` calls at each use site.
+
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
 
 use crate::proto::arp::{OUR_IP, OUR_MAC};
 use crate::proto::ethernet::MacAddress;
 
-use super::error::{ParseError, flag_usage};
+use super::command::Command;
+use super::error::ParseError;
+use super::usage::flag_usage;
 
 pub const DEFAULT_IFACE: &str = "tap0";
 pub const DEFAULT_TUN: &str = "/dev/net/tun";
 pub const DEFAULT_TTL: u8 = 64;
 pub const DEFAULT_CONFIG: &str = "minitcp.toml";
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum HelpTopic {
-    Full,
-    Tap,
-    Identity,
-    Pcap,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Command {
-    Run,
-    Stack,
-    Version,
-    Replay(PathBuf),
-    Pcap(PathBuf),
-    Help(HelpTopic),
-    Bridge,
-    TapUp,
-    TapDown,
-    TapShow,
-    TapSetIface(String),
-    TapSetAddr(Ipv4Addr),
-    TapSetTun(PathBuf),
-    IdentityShow,
-    IdentitySetAddr(Ipv4Addr),
-    IdentitySetMac(MacAddress),
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DropKind {

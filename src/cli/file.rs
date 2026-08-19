@@ -1,8 +1,9 @@
 use std::path::Path;
 
-use super::args::{parse_drop_list, parse_ipv4, parse_mac};
-use super::config::{DropKind, Partial};
-use super::error::{ParseError, USAGE_CONFIG, flag_usage};
+use super::error::ParseError;
+use super::flags::{parse_drop_list, parse_ipv4, parse_mac};
+use super::options::{DropKind, Partial};
+use super::usage::{USAGE_CONFIG, flag_usage};
 
 fn toml_string(v: &::toml::Value, key: &str) -> Result<String, ParseError> {
     v.as_str().map(str::to_string).ok_or_else(|| {
