@@ -1,3 +1,11 @@
+# [1.2.0](https://github.com/dfoshidero/minitcp/compare/v1.1.2...v1.2.0) (2026-08-19)
+
+
+### Features
+
+* group the CLI by stack, TAP, identity, and pcap ([d18018a](https://github.com/dfoshidero/minitcp/commit/d18018a8fd243d06c3c6c3858056147614d61957))
+* one-line install, TAP sidecar, and update nag ([b664bd1](https://github.com/dfoshidero/minitcp/commit/b664bd19619a5aeca45c25c7b78d1c306036e60f))
+
 ## [1.1.2](https://github.com/dfoshidero/minitcp/compare/v1.1.1...v1.1.2) (2026-08-19)
 
 
