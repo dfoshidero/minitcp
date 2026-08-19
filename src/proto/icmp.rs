@@ -27,6 +27,17 @@ pub fn make_echo_reply(request: &[u8]) -> Result<Vec<u8>, &'static str> {
     Ok(reply) // return the reply
 }
 
+pub fn set_echo_id(message: &mut [u8], id: u16) {
+    if message.len() < 8 {
+        return;
+    }
+    message[4..6].copy_from_slice(&id.to_be_bytes());
+    message[2] = 0;
+    message[3] = 0;
+    let sum = internet_checksum(message);
+    message[2..4].copy_from_slice(&sum.to_be_bytes());
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -4,14 +4,14 @@ use std::io::{self, BufReader};
 use std::net::Ipv4Addr;
 use std::path::Path;
 
-use crate::cli::{Command, Config};
+use crate::cli::{Command, Config, DropKind};
 use crate::interface::pcap::{CaptureIo, HexReader, PcapReader, PcapWriter};
 use crate::interface::tap::TapInterface;
 use crate::interface::FrameIo;
 use crate::log::{self, Verb};
 use crate::proto::arp::reply_for;
 use crate::proto::ethernet::{EthernetFrame, EthernetType};
-use crate::proto::icmp::make_echo_reply;
+use crate::proto::icmp::{make_echo_reply, set_echo_id};
 use crate::proto::ipv4::{Ipv4Packet, Protocol};
 
 fn protocol_name(protocol: Protocol) -> String {
@@ -65,6 +65,43 @@ fn ip_pair(src: Ipv4Addr, dst: Ipv4Addr) -> String {
     format!("{src} -> {dst}")
 }
 
+pub struct SeededRng {
+    state: u64,
+}
+
+impl SeededRng {
+    pub fn new(seed: u64) -> Self {
+        Self { state: seed | 1 }
+    }
+
+    pub fn from_entropy() -> Self {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(1);
+        Self::new(nanos)
+    }
+
+    pub fn next_u32(&mut self) -> u32 {
+        let mut x = self.state;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.state = x;
+        (x >> 32) as u32
+    }
+}
+
+pub fn drop_pct_hit(pct: u8, rng: &mut SeededRng) -> bool {
+    if pct == 0 {
+        return false;
+    }
+    if pct >= 100 {
+        return true;
+    }
+    (rng.next_u32() % 100) < u32::from(pct)
+}
+
 fn open_tap(cfg: &Config) -> TapInterface {
     if !cfg.tun.exists() {
         eprintln!(
@@ -111,18 +148,26 @@ fn run_io<I: FrameIo>(cfg: Config, inner: I) -> std::io::Result<()> {
     };
     let mut frames = CaptureIo::new(inner, capture);
     let mut buffer = [0u8; 2048];
+    let mut rng = SeededRng::from_entropy();
+    let mut seen = 0u64;
     loop {
+        if let Some(limit) = cfg.count {
+            if seen >= limit {
+                return Ok(());
+            }
+        }
         let n = frames.read_frame(&mut buffer)?;
         if n == 0 {
             return Ok(());
         }
-        if let Some(reply) = handle_frame(&cfg, &buffer[..n]) {
+        seen += 1;
+        if let Some(reply) = handle_frame(&cfg, &buffer[..n], &mut rng) {
             frames.write_frame(&reply)?;
         }
     }
 }
 
-fn handle_frame(cfg: &Config, bytes: &[u8]) -> Option<Vec<u8>> {
+fn handle_frame(cfg: &Config, bytes: &[u8], rng: &mut SeededRng) -> Option<Vec<u8>> {
     let verbose = cfg.verbose();
     let our_ip = cfg.our_ip_bytes();
     let our_mac = cfg.mac;
@@ -137,6 +182,19 @@ fn handle_frame(cfg: &Config, bytes: &[u8]) -> Option<Vec<u8>> {
         };
 
         let macs = format!("{} -> {}", frame.source, frame.destination);
+
+        if drop_pct_hit(cfg.drop_pct, rng) {
+            log::emit_at(&when, Verb::Drop, "ethernet", "L2", &macs, "random drop");
+            return None;
+        }
+        if cfg.drop.contains(&DropKind::Arp) && frame.ethertype == EthernetType::Arp {
+            log::emit_at(&when, Verb::Drop, "arp", "L2", &macs, "dropped");
+            return None;
+        }
+        if cfg.drop.contains(&DropKind::Ip) && frame.ethertype == EthernetType::Ipv4 {
+            log::emit_at(&when, Verb::Drop, "ipv4", "L3", &macs, "dropped");
+            return None;
+        }
 
         match frame.ethertype {
             EthernetType::Arp => {
@@ -229,6 +287,21 @@ fn handle_frame(cfg: &Config, bytes: &[u8]) -> Option<Vec<u8>> {
                                 }
                                 return None;
                             }
+                            if cfg.drop.contains(&DropKind::Icmp) {
+                                if verbose {
+                                    log::emit_inside(&when, Verb::Drop, "icmp", "L3", "dropped");
+                                } else {
+                                    log::emit_at(
+                                        &when,
+                                        Verb::Drop,
+                                        "icmp",
+                                        "L3",
+                                        &ip_addrs,
+                                        "dropped",
+                                    );
+                                }
+                                return None;
+                            }
                             if verbose {
                                 log::emit_inside(
                                     &when,
@@ -240,11 +313,14 @@ fn handle_frame(cfg: &Config, bytes: &[u8]) -> Option<Vec<u8>> {
                             }
 
                             match make_echo_reply(packet.payload) {
-                                Ok(icmp_reply) => {
+                                Ok(mut icmp_reply) => {
+                                    if let Some(id) = cfg.icmp_id {
+                                        set_echo_id(&mut icmp_reply, id);
+                                    }
                                     let mut ip_packet = Vec::new();
                                     Ipv4Packet::write(
                                         &mut ip_packet,
-                                        64,
+                                        cfg.ttl,
                                         Protocol::Icmp,
                                         Ipv4Addr::from(our_ip),
                                         packet.source,
@@ -274,7 +350,8 @@ fn handle_frame(cfg: &Config, bytes: &[u8]) -> Option<Vec<u8>> {
                                             "L3",
                                             &ip_pair(Ipv4Addr::from(our_ip), packet.source),
                                             &format!(
-                                                "ttl=64 proto=icmp payload={}",
+                                                "ttl={} proto=icmp payload={}",
+                                                cfg.ttl,
                                                 icmp_reply.len()
                                             ),
                                         );
@@ -370,9 +447,15 @@ fn handle_frame(cfg: &Config, bytes: &[u8]) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::Config;
+    use crate::cli::{Config, DropKind};
     use crate::interface::pcap::{pcap_info, PcapReader, PcapWriter};
+    use crate::proto::checksum::internet_checksum;
+    use crate::proto::ethernet::MacAddress;
+    use crate::proto::icmp::make_echo_reply;
+    use std::cell::RefCell;
+    use std::collections::VecDeque;
     use std::fs;
+    use std::rc::Rc;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     const ARP_REQUEST: [u8; 42] = [
@@ -380,6 +463,28 @@ mod tests {
         0x01, 0x08, 0x00, 0x06, 0x04, 0x00, 0x01, 0x02, 0x00, 0x00, 0x00, 0x00, 0x01, 0x0a, 0x00,
         0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0a, 0x00, 0x00, 0x02,
     ];
+
+    struct MockIo {
+        reads: Rc<RefCell<VecDeque<Vec<u8>>>>,
+        writes: Rc<RefCell<Vec<Vec<u8>>>>,
+    }
+
+    impl FrameIo for MockIo {
+        fn read_frame(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            match self.reads.borrow_mut().pop_front() {
+                None => Ok(0),
+                Some(frame) => {
+                    buffer[..frame.len()].copy_from_slice(&frame);
+                    Ok(frame.len())
+                }
+            }
+        }
+
+        fn write_frame(&mut self, frame: &[u8]) -> io::Result<()> {
+            self.writes.borrow_mut().push(frame.to_vec());
+            Ok(())
+        }
+    }
 
     fn tmp(name: &str) -> std::path::PathBuf {
         let n = SystemTime::now()
@@ -389,13 +494,127 @@ mod tests {
         std::env::temp_dir().join(format!("minitcp-{name}-{n}.pcap"))
     }
 
+    fn ping_frame() -> Vec<u8> {
+        let mut icmp = vec![8, 0, 0, 0, 0x12, 0x34, 0x00, 0x01, b'h', b'i'];
+        let sum = internet_checksum(&icmp);
+        icmp[2..4].copy_from_slice(&sum.to_be_bytes());
+        let mut ip = Vec::new();
+        Ipv4Packet::write(
+            &mut ip,
+            64,
+            Protocol::Icmp,
+            Ipv4Addr::new(10, 0, 0, 1),
+            Ipv4Addr::new(10, 0, 0, 2),
+            &icmp,
+        );
+        let mut eth = Vec::new();
+        EthernetFrame::write_ethernet(
+            &mut eth,
+            MacAddress([0x02, 0x00, 0x00, 0x00, 0x00, 0x02]),
+            MacAddress([0x02, 0x00, 0x00, 0x00, 0x00, 0x01]),
+            0x0800,
+            &ip,
+        );
+        eth
+    }
+
+    fn reply(cfg: &Config, frame: &[u8]) -> Option<Vec<u8>> {
+        handle_frame(cfg, frame, &mut SeededRng::new(1))
+    }
+
     #[test]
     fn handle_frame_replies_to_arp() {
         let cfg = Config::defaults();
-        let reply = handle_frame(&cfg, &ARP_REQUEST).expect("arp reply");
-        assert_eq!(&reply[0..6], &ARP_REQUEST[6..12]);
-        assert_eq!(&reply[6..12], &cfg.mac.0);
-        assert_eq!(&reply[12..14], &[0x08, 0x06]);
+        let out = reply(&cfg, &ARP_REQUEST).expect("arp reply");
+        assert_eq!(&out[0..6], &ARP_REQUEST[6..12]);
+        assert_eq!(&out[6..12], &cfg.mac.0);
+        assert_eq!(&out[12..14], &[0x08, 0x06]);
+    }
+
+    #[test]
+    fn drop_arp_produces_no_write_icmp_still_replies() {
+        let mut cfg = Config::defaults();
+        cfg.drop = vec![DropKind::Arp];
+        assert!(reply(&cfg, &ARP_REQUEST).is_none());
+        assert!(reply(&cfg, &ping_frame()).is_some());
+    }
+
+    #[test]
+    fn drop_icmp_produces_no_write_arp_still_replies() {
+        let mut cfg = Config::defaults();
+        cfg.drop = vec![DropKind::Icmp];
+        assert!(reply(&cfg, &ping_frame()).is_none());
+        assert!(reply(&cfg, &ARP_REQUEST).is_some());
+    }
+
+    #[test]
+    fn drop_ip_ignores_ipv4_but_not_arp() {
+        let mut cfg = Config::defaults();
+        cfg.drop = vec![DropKind::Ip];
+        assert!(reply(&cfg, &ping_frame()).is_none());
+        assert!(reply(&cfg, &ARP_REQUEST).is_some());
+    }
+
+    #[test]
+    fn drop_arp_and_icmp_together() {
+        let mut cfg = Config::defaults();
+        cfg.drop = vec![DropKind::Arp, DropKind::Icmp];
+        assert!(reply(&cfg, &ARP_REQUEST).is_none());
+        assert!(reply(&cfg, &ping_frame()).is_none());
+    }
+
+    #[test]
+    fn drop_pct_zero_never_hundred_always_fifty_is_deterministic() {
+        let mut rng = SeededRng::new(42);
+        for _ in 0..32 {
+            assert!(!drop_pct_hit(0, &mut rng));
+        }
+        let mut rng = SeededRng::new(42);
+        for _ in 0..32 {
+            assert!(drop_pct_hit(100, &mut rng));
+        }
+        let mut a = SeededRng::new(7);
+        let mut b = SeededRng::new(7);
+        let seq_a: Vec<bool> = (0..20).map(|_| drop_pct_hit(50, &mut a)).collect();
+        let seq_b: Vec<bool> = (0..20).map(|_| drop_pct_hit(50, &mut b)).collect();
+        assert_eq!(seq_a, seq_b);
+        assert!(seq_a.iter().any(|h| *h) && seq_a.iter().any(|h| !*h));
+    }
+
+    #[test]
+    fn ttl_and_id_on_icmp_reply() {
+        let mut cfg = Config::defaults();
+        cfg.ttl = 32;
+        cfg.icmp_id = Some(0x9999);
+        let out = reply(&cfg, &ping_frame()).expect("icmp reply");
+        let frame = EthernetFrame::parse(&out).unwrap();
+        let ip = Ipv4Packet::parse(frame.payload).unwrap();
+        assert_eq!(ip.ttl, 32);
+        assert_eq!(&ip.payload[4..6], &[0x99, 0x99]);
+        assert_eq!(internet_checksum(ip.payload), 0);
+        let default = reply(&Config::defaults(), &ping_frame()).unwrap();
+        let default_ip = Ipv4Packet::parse(EthernetFrame::parse(&default).unwrap().payload).unwrap();
+        assert_eq!(default_ip.ttl, 64);
+        assert_eq!(&default_ip.payload[4..6], &[0x12, 0x34]);
+    }
+
+    #[test]
+    fn count_stops_before_extra_reads() {
+        let mut cfg = Config::defaults();
+        cfg.count = Some(2);
+        let reads = Rc::new(RefCell::new(VecDeque::from([
+            ARP_REQUEST.to_vec(),
+            ARP_REQUEST.to_vec(),
+            ARP_REQUEST.to_vec(),
+        ])));
+        let writes = Rc::new(RefCell::new(Vec::new()));
+        let io = MockIo {
+            reads: reads.clone(),
+            writes: writes.clone(),
+        };
+        run_io(cfg, io).unwrap();
+        assert_eq!(writes.borrow().len(), 2);
+        assert_eq!(reads.borrow().len(), 1);
     }
 
     #[test]
@@ -413,5 +632,16 @@ mod tests {
         assert!(info.contains("0x0806"));
         assert!(info.contains("1 frames"));
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn echo_id_helper_rewrites_checksum() {
+        let frame = ping_frame();
+        let eth = EthernetFrame::parse(&frame).unwrap();
+        let ip = Ipv4Packet::parse(eth.payload).unwrap();
+        let mut reply = make_echo_reply(ip.payload).unwrap();
+        set_echo_id(&mut reply, 7);
+        assert_eq!(&reply[4..6], &[0x00, 0x07]);
+        assert_eq!(internet_checksum(&reply), 0);
     }
 }
