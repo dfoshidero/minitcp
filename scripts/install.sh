@@ -43,4 +43,4 @@ case ":$PATH:" in
     echo "add this to your shell rc:  export PATH=\"$DEST_DIR:\$PATH\""
     ;;
 esac
-"$DEST_DIR/minitcp" --help >/dev/null 2>&1 || true
+"$DEST_DIR/minitcp" --help

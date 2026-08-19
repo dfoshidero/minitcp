@@ -19,7 +19,7 @@ minitcp tap down
 
 That puts `minitcp` in `~/.local/bin` (add that directory to `PATH` if the script says so). Pin a release with `VERSION=1.1.0` in front of the curl.
 
-TAP is a Linux kernel device. `minitcp tap up` starts a sidecar that owns `tap0` and forwards frames to `127.0.0.1:7946`. On Linux with `/dev/net/tun`, MiniTCP can use a local TAP instead (no Docker). The host does not get a route into `10.0.0.2`; ping that address from Linux that owns the TAP (the sidecar, or this machine if TAP is local). The `p` key in the TUI does that for you when the sidecar is up.
+TAP is a Linux kernel device. `minitcp tap up` starts a sidecar (root inside Docker, so it can attach to TAP) that owns `tap0` and forwards frames to `127.0.0.1:7946`. It returns only once that port is listening. On Linux with `/dev/net/tun`, MiniTCP can use a local TAP instead (no Docker). The host does not get a route into `10.0.0.2`; ping that address from Linux that owns the TAP (the sidecar, or this machine if TAP is local). The `p` key in the TUI does that for you when the sidecar is up.
 
 Hacking on this repo: Dev Container or `cargo run` (below).
 

@@ -29,6 +29,18 @@ impl TapInterface {
             file: self.file.try_clone()?,
         })
     }
+
+    #[cfg(test)]
+    pub(crate) fn from_file(file: File) -> Self {
+        Self { file }
+    }
+}
+
+#[cfg(unix)]
+impl std::os::fd::AsRawFd for TapInterface {
+    fn as_raw_fd(&self) -> std::os::fd::RawFd {
+        std::os::fd::AsRawFd::as_raw_fd(&self.file)
+    }
 }
 
 /// Create the TAP and give Linux an address (sidecar / local Linux).
