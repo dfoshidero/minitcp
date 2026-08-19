@@ -193,12 +193,28 @@ fn tap_family_parses() {
         parse_ok(&["tap", "--help"]).command,
         Command::Help(HelpTopic::Tap)
     );
+    // A bad subcommand says what was wrong before it shows the family usage.
     let err = parse_err(&["tap", "nope"]);
+    assert!(
+        err.contains("error: unknown tap subcommand 'nope'"),
+        "{err}"
+    );
     assert!(err.contains("usage: minitcp tap"), "{err}");
-    assert!(!err.contains("needs a value"), "{err}");
-    assert!(!err.contains("error:"), "{err}");
     let set = parse_ok(&["tap", "addr", "10.0.0.9"]);
     assert_eq!(set.command, Command::TapSetAddr(Ipv4Addr::new(10, 0, 0, 9)));
+}
+
+#[test]
+fn a_missing_argument_says_what_was_missing() {
+    for (argv, want) in [
+        (vec!["pcap"], "pcap needs a FILE"),
+        (vec!["tap", "iface"], "tap iface needs a NAME"),
+        (vec!["tap", "addr"], "tap addr needs an IP"),
+        (vec!["identity", "mac"], "identity mac needs a MAC"),
+    ] {
+        let err = parse_err(&argv);
+        assert!(err.contains(want), "{argv:?}: {err}");
+    }
 }
 
 #[test]
