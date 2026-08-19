@@ -15,7 +15,7 @@ Releases are cut from [conventional commit](https://www.conventionalcommits.org/
 | `docs:` | skipped | skipped |
 | `chore:`, `test:` | run | no publish (semantic-release no-op) |
 
-Release notes go in [CHANGELOG.md](../CHANGELOG.md) and GitHub Releases (`feat` / `fix` / breaking only). Squash-merge if you want `(#PR)` in the entry.
+Release notes go in [CHANGELOG.md](CHANGELOG.md) and GitHub Releases (`feat` / `fix` / breaking only). Squash-merge if you want `(#PR)` in the entry.
 
 ## Development
 

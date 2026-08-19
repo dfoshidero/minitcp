@@ -94,7 +94,7 @@ sudo chown -R netstack:netstack /workspaces/minitcp
 ```bash
 # A TAP is a fake Ethernet cable. Linux holds one end - MiniTCP holds the other.
 # Inspect the script below to see its setup.
-./setup-tap.sh
+./scripts/setup-tap.sh
 ```
 
 That creates the fake Ethernet cable, gives Linux `10.0.0.1/24` on it, and plugs it in (`UP`). It is safe to run more than once.
@@ -156,7 +156,7 @@ Use this if you want to inspect each command without the lab.
 Terminal 1:
 
 ```bash
-./setup-tap.sh
+./scripts/setup-tap.sh
 minitcp stack
 ```
 
@@ -236,8 +236,8 @@ IPv4 notes that are easy to miss:
 ## Layout
 
 - `docs/GLOSSARY.md` — short definitions of terms the code uses.
-- `Dockerfile` — published lab image (`ghcr.io/dfoshidero/minitcp`). The Dev Container image is `.devcontainer/Dockerfile`.
-- `setup-tap.sh` — manually create and bring up `tap0`; the lab does this automatically.
+- `docker/Dockerfile` — published lab image (`ghcr.io/dfoshidero/minitcp`). The Dev Container image is `.devcontainer/Dockerfile`.
+- `scripts/setup-tap.sh` — manually create and bring up `tap0`; the lab does this automatically.
 - `src/main.rs` — command dispatcher: terminal lab by default, raw stack with `stack`.
 - `src/stack.rs` — TAP loop: read a frame, dispatch to a protocol, write a reply.
 - `src/log.rs` — quiet one-liner, or verbose `[IN]` / `[OUT]` / `[..]` peel.

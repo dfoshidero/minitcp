@@ -69,7 +69,7 @@ fn open_tap0() -> TapInterface {
 
     if !Path::new("/sys/class/net/tap0").exists() {
         eprintln!("tap0 is not up yet. Create it first:");
-        eprintln!("  ./setup-tap.sh");
+        eprintln!("  ./scripts/setup-tap.sh");
         std::process::exit(1);
     }
 
@@ -77,7 +77,7 @@ fn open_tap0() -> TapInterface {
         Ok(tap) => tap,
         Err(e) => {
             eprintln!("cannot attach to tap0: {e}");
-            eprintln!("Try:  ./setup-tap.sh");
+            eprintln!("Try:  ./scripts/setup-tap.sh");
             std::process::exit(1);
         }
     }

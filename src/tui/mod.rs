@@ -530,7 +530,7 @@ impl Lab {
         action_buf
             .push("lab ready. Tab focuses a pane. p ping  n neigh  f flush  d dump filter.".into());
         if !stack_alive {
-            action_buf.push("stack failed to stay up — try ./setup-tap.sh then r".into());
+            action_buf.push("stack failed to stay up — try ./scripts/setup-tap.sh then r".into());
         }
 
         Ok(Self {
