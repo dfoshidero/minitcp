@@ -38,10 +38,14 @@ impl<'a> EthernetFrame<'a> {
             return Err("truncated ethernet frame");
         }
 
-        let destination = MacAddress(input[0..6].try_into().unwrap());
-        let source = MacAddress(input[6..12].try_into().unwrap());
+        let destination = MacAddress(
+            input[0..6]
+                .try_into()
+                .map_err(|_| "invalid destination MAC")?,
+        );
+        let source = MacAddress(input[6..12].try_into().map_err(|_| "invalid source MAC")?);
         // Same "high byte first" order ARP and IPv4 use. to_be_bytes below writes it back that way.
-        let raw = u16::from_be_bytes(input[12..14].try_into().unwrap());
+        let raw = u16::from_be_bytes(input[12..14].try_into().map_err(|_| "invalid EtherType")?);
         let ethertype = match raw {
             0x0800 => EthernetType::Ipv4,
             0x0806 => EthernetType::Arp,

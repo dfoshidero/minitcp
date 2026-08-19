@@ -4,7 +4,6 @@ use super::checksum::internet_checksum;
 
 /// ICMP Echo Request is type 8 / code 0. Echo Reply is type 0 / code 0.
 /// Checksum covers the entire ICMP message (header + payload) - unlike TCP/UDP which only cover the header.
-
 pub fn make_echo_reply(request: &[u8]) -> Result<Vec<u8>, &'static str> {
     if request.len() < 8 {
         return Err("truncated ICMP echo");

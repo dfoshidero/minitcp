@@ -27,9 +27,9 @@ fn is_setter(command: &Command) -> bool {
 /// Parse argv without the program name. `cwd` is where `./minitcp.toml` is sought.
 pub fn parse_from(args: &[String], cwd: &Path) -> Result<Config, ParseError> {
     let cli = args::parse_cli(args)?;
-    if let Some(Command::Help(topic)) = cli.command {
+    if let Some(command @ (Command::Help(_) | Command::Version)) = &cli.command {
         let mut cfg = Config::defaults();
-        cfg.command = Command::Help(topic);
+        cfg.command = command.clone();
         return Ok(cfg);
     }
 

@@ -105,6 +105,7 @@ pub(crate) fn parse_cli(args: &[String]) -> Result<Partial, ParseError> {
         if arg.starts_with('-') {
             match arg {
                 "-q" | "--quiet" => partial.quiet = Some(true),
+                "-V" | "--version" => set_command(&mut partial, Command::Version)?,
                 "--hex" => partial.hex = Some(true),
                 "--offline" => partial.offline = Some(true),
                 "--once" => partial.count = Some(1),
