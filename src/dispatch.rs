@@ -13,7 +13,7 @@ use crate::{AppError, log, release, stack, sys, tui};
 
 pub fn run() -> Result<(), AppError> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let cfg = cli::parse(&args).map_err(AppError::Usage)?;
+    let cfg = cli::parse(&args).map_err(AppError::Cli)?;
 
     for warning in &cfg.warnings {
         log::status::warn(warning);
@@ -76,7 +76,7 @@ fn identity_status(cfg: &Config) -> String {
 }
 
 fn write_key(cfg: &Config, key: &str, value: &str) -> Result<(), AppError> {
-    cli::write_config_key(cfg, key, value).map_err(AppError::Config)?;
+    cli::write_config_key(cfg, key, value).map_err(AppError::Cli)?;
     log::status::ok(format!(
         "wrote {key} = {value}  ({})",
         cfg.config_path.display()

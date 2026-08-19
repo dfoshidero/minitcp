@@ -9,6 +9,10 @@ use super::usage::{TRY_HELP, flag_usage};
 pub struct ParseError {
     pub message: String,
     pub usage: Option<String>,
+    /// What minitcp exits with. 2 says the command line was wrong, which is
+    /// the usual case; writing minitcp.toml can fail for reasons the user did
+    /// not type, and that is an ordinary failure (1).
+    exit_code: i32,
 }
 
 impl ParseError {
@@ -16,6 +20,7 @@ impl ParseError {
         Self {
             message: message.into(),
             usage: Some(TRY_HELP.into()),
+            exit_code: 2,
         }
     }
 
@@ -23,7 +28,21 @@ impl ParseError {
         Self {
             message: message.into(),
             usage: Some(usage.into()),
+            exit_code: 2,
         }
+    }
+
+    /// The same error, reported as a failure to do the work rather than as a
+    /// misuse of the command line.
+    pub(crate) fn into_failure(self) -> Self {
+        Self {
+            exit_code: 1,
+            ..self
+        }
+    }
+
+    pub fn exit_code(&self) -> i32 {
+        self.exit_code
     }
 
     pub fn report(&self) -> String {

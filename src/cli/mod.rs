@@ -130,7 +130,7 @@ pub fn parse(args: &[String]) -> Result<Config, ParseError> {
 }
 
 pub(crate) fn write_config_key(cfg: &Config, key: &str, value: &str) -> Result<(), ParseError> {
-    file::set_string(&cfg.config_path, key, value)
+    file::set_string(&cfg.config_path, key, value).map_err(ParseError::into_failure)
 }
 
 #[cfg(test)]

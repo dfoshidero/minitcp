@@ -158,10 +158,9 @@ pub(super) fn run_io<I: FrameIo>(
                 io::Error::new(error.kind(), format!("cannot write reply frame: {error}"))
             })?;
         }
+        // A closed stdout ends the run. `main` decides what that means for the
+        // exit code — a broken pipe is `minitcp stack | head`, not a failure.
         if let Some(error) = log::take_output_error() {
-            if error.kind() == io::ErrorKind::BrokenPipe {
-                return Ok(());
-            }
             return Err(io::Error::new(
                 error.kind(),
                 format!("cannot write protocol output: {error}"),
