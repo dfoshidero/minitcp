@@ -41,9 +41,9 @@ jobs:
           {
             echo "platforms<<EOF"
             if [ "$EVENT" = pull_request ]; then
-              echo '[{"runner":"ubuntu-latest","platform":"linux/amd64"}]'
+              echo '[{"runner":"ubuntu-latest","platform":"linux/amd64","arch":"amd64"}]'
             else
-              echo '[{"runner":"ubuntu-latest","platform":"linux/amd64"},{"runner":"ubuntu-24.04-arm","platform":"linux/arm64"}]'
+              echo '[{"runner":"ubuntu-latest","platform":"linux/amd64","arch":"amd64"},{"runner":"ubuntu-24.04-arm","platform":"linux/arm64","arch":"arm64"}]'
             fi
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
@@ -66,6 +66,9 @@ jobs:
   build:
     name: build (${{ matrix.platform }})
     needs: classify
+    permissions:
+      contents: read
+      packages: write
     strategy:
       fail-fast: false
       matrix:
@@ -77,6 +80,12 @@ jobs:
         run: echo "docs-only; image build not required"
       - uses: actions/checkout@v4
         if: needs.classify.outputs.checks == 'true'
+      - uses: docker/login-action@v3
+        if: needs.classify.outputs.checks == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/setup-buildx-action@v3
         if: needs.classify.outputs.checks == 'true'
       - uses: docker/build-push-action@v6
@@ -85,9 +94,9 @@ jobs:
           context: .
           file: docker/Dockerfile
           platforms: ${{ matrix.platform }}
-          push: false
-          tags: minitcp:ci
-          outputs: type=cacheonly
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          tags: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && format('ghcr.io/{0}:sha-{1}-{2}', github.repository, github.sha, matrix.arch) || 'minitcp:ci' }}
+          outputs: ${{ github.event_name == 'pull_request' && 'type=cacheonly' || '' }}
           cache-from: type=gha,scope=${{ matrix.platform }}
           cache-to: type=gha,mode=max,scope=${{ matrix.platform }},ignore-error=true
 
@@ -110,6 +119,9 @@ jobs:
     needs: [classify, test, build]
     if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.classify.outputs.checks == 'true' && needs.test.result == 'success' && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
+    outputs:
+      published: ${{ steps.release.outputs.new_release_published }}
+      version: ${{ steps.release.outputs.new_release_version }}
     permissions:
       contents: write
       packages: write
@@ -148,8 +160,6 @@ jobs:
           SHA: ${{ steps.changelog.outputs.pull-request-head-sha }}
         run: |
           set -euo pipefail
-          # GITHUB_TOKEN PRs do not start workflows, so required checks would stay pending.
-          # Report the same names CI uses; this PR only touches docs/CHANGELOG.md.
           for name in test build "build (linux/amd64)" status; do
             gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
               -f name="$name" \
@@ -163,26 +173,55 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/setup-qemu-action@v3
-        if: steps.release.outputs.new_release_published == 'true'
       - uses: docker/setup-buildx-action@v3
         if: steps.release.outputs.new_release_published == 'true'
-      - uses: docker/metadata-action@v5
+      - name: Retag SHA images as version and latest
         if: steps.release.outputs.new_release_published == 'true'
-        id: meta
-        with:
-          images: ghcr.io/${{ github.repository }}
-          tags: |
-            type=raw,value=latest
-            type=raw,value=${{ steps.release.outputs.new_release_version }}
-      - uses: docker/build-push-action@v6
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}
+          VERSION: ${{ steps.release.outputs.new_release_version }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            -t "${IMAGE}:${VERSION}" \
+            -t "${IMAGE}:latest" \
+            "${IMAGE}:sha-${SHA}-amd64" \
+            "${IMAGE}:sha-${SHA}-arm64"
+      - name: Upload install.sh
         if: steps.release.outputs.new_release_published == 'true'
-        with:
-          context: .
-          file: docker/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max,ignore-error=true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.release.outputs.new_release_version }}
+        run: gh release upload "v${VERSION}" scripts/install.sh --clobber
+
+  host-binaries:
+    name: host-binaries (${{ matrix.asset }})
+    needs: release
+    if: needs.release.outputs.published == 'true'
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            asset: minitcp-aarch64-apple-darwin
+          - runner: macos-13
+            asset: minitcp-x86_64-apple-darwin
+          - runner: ubuntu-latest
+            asset: minitcp-x86_64-unknown-linux-gnu
+          - runner: ubuntu-24.04-arm
+            asset: minitcp-aarch64-unknown-linux-gnu
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release
+        env:
+          MINITCP_RELEASE: ${{ needs.release.outputs.version }}
+      - run: cp target/release/minitcp "${{ matrix.asset }}"
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.release.outputs.version }}
+        run: gh release upload "v${VERSION}" "${{ matrix.asset }}" --clobber
