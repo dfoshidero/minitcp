@@ -74,6 +74,8 @@ pub struct Config {
     pub listen: String,
     pub offline: bool,
     pub config_path: PathBuf,
+    /// Notes from parsing that dispatch prints before it does the work.
+    pub warnings: Vec<String>,
 }
 
 impl Config {
@@ -98,6 +100,7 @@ impl Config {
             listen: crate::interface::fwd::DEFAULT_LISTEN.into(),
             offline: false,
             config_path: PathBuf::from(DEFAULT_CONFIG),
+            warnings: Vec::new(),
         }
     }
 
@@ -205,6 +208,10 @@ pub(crate) struct Partial {
     pub fwd: Option<String>,
     pub listen: Option<String>,
     pub offline: Option<bool>,
+    /// The flags argv actually named, canonical spelling, in the order given.
+    /// Only the command line fills this in: a key in minitcp.toml applies to
+    /// every command, so it is not the user saying it here and now.
+    pub given: Vec<&'static str>,
 }
 
 pub fn default_linux_addr(addr: Ipv4Addr) -> Ipv4Addr {

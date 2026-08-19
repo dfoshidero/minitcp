@@ -234,6 +234,26 @@ fn two_frame_sources_are_refused() {
 }
 
 #[test]
+fn flags_the_command_never_reads_are_warned_about() {
+    // Warned about, not refused: the command still has to work.
+    let cfg = parse_ok(&["tap", "up", "--ttl", "3"]);
+    assert_eq!(cfg.warnings, vec!["--ttl has no effect on `tap up`"]);
+    assert_eq!(cfg.ttl, 3);
+    // --iface reaches `tap up`, and --config reaches everything.
+    assert!(
+        parse_ok(&["tap", "up", "--iface", "tap1"])
+            .warnings
+            .is_empty()
+    );
+    assert!(
+        parse_ok(&["identity", "--addr", "10.0.0.9"])
+            .warnings
+            .is_empty()
+    );
+    assert!(parse_ok(&["--ttl", "3"]).warnings.is_empty());
+}
+
+#[test]
 fn pcap_and_replay_parse() {
     let cfg = parse_ok(&["pcap", "out.pcap"]);
     assert_eq!(cfg.command, Command::Pcap(PathBuf::from("out.pcap")));

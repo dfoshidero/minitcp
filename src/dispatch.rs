@@ -15,6 +15,10 @@ pub fn run() -> Result<(), AppError> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let cfg = cli::parse(&args).map_err(AppError::Usage)?;
 
+    for warning in &cfg.warnings {
+        log::status::warn(warning);
+    }
+
     let skip_nag = cfg.offline
         || !matches!(
             cfg.command,

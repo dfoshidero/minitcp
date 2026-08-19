@@ -31,6 +31,31 @@ fn is_setter(command: &Command) -> bool {
     )
 }
 
+/// Flags argv named that this command never reads. Warned about rather than
+/// refused: a stale `--ttl` should not stop `tap up` from bringing a TAP up.
+fn inert_flags(command: &Command, given: &[&'static str]) -> Vec<String> {
+    let scope = command.scope();
+    let mut inert: Vec<&str> = given
+        .iter()
+        .copied()
+        .filter(|flag| !flags::applies(flag, scope))
+        .collect();
+    inert.dedup();
+    if inert.is_empty() {
+        return Vec::new();
+    }
+    let named = if inert.len() == 2 {
+        inert.join(" and ")
+    } else {
+        inert.join(", ")
+    };
+    vec![format!(
+        "{named} {} no effect on `{}`",
+        if inert.len() == 1 { "has" } else { "have" },
+        command.label()
+    )]
+}
+
 /// Frames reach the stack from exactly one place. Naming two is refused here
 /// rather than in `run_stack`, which would otherwise silently honour whichever
 /// source it happens to test first.
@@ -95,6 +120,7 @@ pub fn parse_from(args: &[String], cwd: &Path) -> Result<Config, ParseError> {
     cfg.config_path = config_path;
     cfg.command = cli.command.clone().unwrap_or(Command::Run);
     one_frame_source(&cfg.command, &cli)?;
+    cfg.warnings = inert_flags(&cfg.command, &cli.given);
     Ok(cfg)
 }
 

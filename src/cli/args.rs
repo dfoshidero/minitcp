@@ -72,6 +72,9 @@ pub(crate) fn parse_cli(args: &[String]) -> Result<Partial, ParseError> {
                 continue;
             }
             let name = flags::canonical(arg);
+            if let Some(known) = flags::lookup(name) {
+                partial.given.push(known.name);
+            }
             let value = if flags::takes_value(name) {
                 Some(take_value(args, &mut i, arg)?)
             } else {

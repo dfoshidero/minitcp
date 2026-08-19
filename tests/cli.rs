@@ -593,6 +593,23 @@ fn tap_show_reports_iface_addr_and_tun() {
 /// `tap` with no subcommand answers what the settings are. It is not an error
 /// and not a help request, so it says that and stops.
 #[test]
+fn a_flag_the_command_cannot_use_warns_but_still_runs() {
+    let out = run(&["identity", "--ttl", "3", "--drop", "icmp", "--offline"]);
+    assert_eq!(out.code, 0, "{}", out.dump("identity with stray flags"));
+    assert!(
+        out.stdout.contains("addr"),
+        "{}",
+        out.dump("identity still reports")
+    );
+    assert!(
+        out.stderr
+            .contains("--ttl and --drop have no effect on `identity`"),
+        "{}",
+        out.dump("stray flags are named on stderr")
+    );
+}
+
+#[test]
 fn tap_show_reports_settings_on_stdout_without_a_help_page() {
     let out = run(&["tap"]);
     assert_eq!(out.code, 0, "{}", out.dump("tap show"));
