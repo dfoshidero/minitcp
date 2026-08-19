@@ -1,6 +1,6 @@
 # Contributing
 
-Fork the repo and open a pull request against `main`. CI (`test` and `docker`) must pass. A maintainer reviews before merge.
+Fork the repo and open a pull request against `main`. CI (`test` and `build`) must pass. A maintainer reviews before merge.
 
 ## Commit messages
 
@@ -12,6 +12,8 @@ Releases are cut from [conventional commit](https://www.conventionalcommits.org/
 | `feat:` | minor release |
 | `feat!:` or `BREAKING CHANGE:` | major release |
 | `docs:`, `chore:`, `refactor:`, `test:`, `ci:` | no release |
+
+Release notes go in [CHANGELOG.md](../CHANGELOG.md) and GitHub Releases (`feat` / `fix` / breaking only). Squash-merge if you want `(#PR)` in the entry.
 
 ## Development
 
