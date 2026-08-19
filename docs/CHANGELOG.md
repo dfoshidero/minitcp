@@ -4,6 +4,15 @@
 ### Bug Fixes
 
 * print help after the Docker lab shell starts ([69460f3](https://github.com/dfoshidero/minitcp/commit/69460f30b8ba33957f6506fd7a70066156a1d8d4))
+* print command-specific CLI errors ([34a1373](https://github.com/dfoshidero/minitcp/commit/34a13733df650f3124ce23b0d19e9f85f4355c98))
+
+
+### Features
+
+* add CLI config, help, and minitcp.toml ([148e1a3](https://github.com/dfoshidero/minitcp/commit/148e1a3bd2c19068a175b74625f0c69b58b5b2de))
+* add drop, count, and ICMP lab knobs ([1f003a6](https://github.com/dfoshidero/minitcp/commit/1f003a6803b92fcc94335b0c033bf0635faa30e1))
+* add pcap replay, write, and hex frames ([465f365](https://github.com/dfoshidero/minitcp/commit/465f3657145aeb0d0bce4a2ea5e0840fdaf8aac4))
+* apply TAP identity from config ([f56ffbd](https://github.com/dfoshidero/minitcp/commit/f56ffbd3491530b68297ac0bdc589662b6d2eb2f))
 
 ## [1.0.2](https://github.com/dfoshidero/minitcp/compare/v1.0.1...v1.0.2) (2026-08-19)
 
