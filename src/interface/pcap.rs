@@ -130,10 +130,7 @@ impl<R: BufRead> FrameIo for HexReader<R> {
 }
 
 pub fn decode_hex_line(line: &str) -> Result<Vec<u8>, String> {
-    let hex: String = line
-        .chars()
-        .filter(|c| !c.is_whitespace())
-        .collect();
+    let hex: String = line.chars().filter(|c| !c.is_whitespace()).collect();
     if hex.len() % 2 != 0 {
         return Err("odd-length hex".into());
     }
@@ -308,7 +305,11 @@ mod tests {
 
     #[test]
     fn hex_reader_yields_one_frame() {
-        let line = ARP_FRAME.iter().map(|b| format!("{b:02x}")).collect::<String>() + "\n";
+        let line = ARP_FRAME
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+            + "\n";
         let mut hex = HexReader::new(std::io::Cursor::new(line));
         let mut buf = [0u8; 2048];
         let n = hex.read_frame(&mut buf).unwrap();

@@ -73,7 +73,7 @@ impl<'a> Ipv4Packet<'a> {
         let frag = u16::from_be_bytes([input[6], input[7]]);
         // AND peels one fact out of the packed field (see MORE_FRAGMENTS / FRAGMENT_OFFSET).
         // Either one set means a torn packet; v1 drops it rather than reassembling.
-        if (frag & FRAGMENT_OFFSET) !=0 || (frag & MORE_FRAGMENTS) !=0{
+        if (frag & FRAGMENT_OFFSET) != 0 || (frag & MORE_FRAGMENTS) != 0 {
             return Err("ipv4 fragmentation unsupported");
         }
 
@@ -102,7 +102,7 @@ impl<'a> Ipv4Packet<'a> {
         destination: Ipv4Addr,
         payload: &[u8],
     ) {
-        let total_length =(MINIMUM_IPV4_HEADER_SIZE + payload.len()) as u16;
+        let total_length = (MINIMUM_IPV4_HEADER_SIZE + payload.len()) as u16;
         let header_start = out.len();
 
         out.push((4 << 4) | 5); // version 4, IHL 5 (20 bytes)
@@ -117,7 +117,8 @@ impl<'a> Ipv4Packet<'a> {
         out.extend_from_slice(&destination.octets()); // destination address
         out.extend_from_slice(payload);
 
-        let checksum = internet_checksum(&out[header_start..header_start+MINIMUM_IPV4_HEADER_SIZE]);
+        let checksum =
+            internet_checksum(&out[header_start..header_start + MINIMUM_IPV4_HEADER_SIZE]);
         out[header_start + 10..header_start + 12].copy_from_slice(&checksum.to_be_bytes());
     }
 }
@@ -128,26 +129,33 @@ mod tests {
 
     // Ping-sized IPv4 + 8-byte ICMP echo from 10.0.0.1 → 10.0.0.2
     const PING: [u8; 28] = [
-        0x45, 0x00, 0x00, 0x1c, 0x00, 0x00, 0x00, 0x00,
-        0x40, 0x01, 0x66, 0xdf, 0x0a, 0x00, 0x00, 0x01,
-        0x0a, 0x00, 0x00, 0x02, 0x08, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00,
+        0x45, 0x00, 0x00, 0x1c, 0x00, 0x00, 0x00, 0x00, 0x40, 0x01, 0x66, 0xdf, 0x0a, 0x00, 0x00,
+        0x01, 0x0a, 0x00, 0x00, 0x02, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     ];
 
     #[test]
     fn parse_rejects_truncated() {
-        assert_eq!(Ipv4Packet::parse(&[0u8; 19]).err(), Some("truncated ipv4 header"));
+        assert_eq!(
+            Ipv4Packet::parse(&[0u8; 19]).err(),
+            Some("truncated ipv4 header")
+        );
     }
 
     #[test]
     fn parse_rejects_invalid_version_and_ihl() {
         let mut bad_ver = PING;
         bad_ver[0] = 0x65; // version 6, IHL 5
-        assert_eq!(Ipv4Packet::parse(&bad_ver).err(), Some("invalid ipv4 header"));
+        assert_eq!(
+            Ipv4Packet::parse(&bad_ver).err(),
+            Some("invalid ipv4 header")
+        );
 
         let mut bad_ihl = PING;
         bad_ihl[0] = 0x44; // version 4, IHL 4 → 16 bytes
-        assert_eq!(Ipv4Packet::parse(&bad_ihl).err(), Some("invalid ipv4 header"));
+        assert_eq!(
+            Ipv4Packet::parse(&bad_ihl).err(),
+            Some("invalid ipv4 header")
+        );
     }
 
     #[test]

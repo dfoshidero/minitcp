@@ -7,10 +7,10 @@ mod file;
 
 use std::path::{Path, PathBuf};
 
-pub use config::{Command, Config, DropKind, DEFAULT_CONFIG};
-pub use error::{usage, ParseError};
+pub use config::{Command, Config, DEFAULT_CONFIG, DropKind};
+pub use error::{ParseError, usage};
 
-use config::{apply_partial, default_linux_addr, Partial};
+use config::{Partial, apply_partial, default_linux_addr};
 use error::USAGE_CONFIG;
 
 /// Parse argv without the program name. `cwd` is where `./minitcp.toml` is sought.

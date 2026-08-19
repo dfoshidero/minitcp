@@ -31,7 +31,6 @@ pub struct EthernetFrame<'a> {
     pub payload: &'a [u8],
 }
 
-
 impl<'a> EthernetFrame<'a> {
     pub fn parse(input: &'a [u8]) -> Result<Self, &'static str> {
         // Ethernet II header is 14 bytes: dst MAC [0..6], src MAC [6..12], EtherType [12..14].
@@ -81,28 +80,26 @@ mod tests {
     const ARP_REQUEST: [u8; 42] = [
         0xff, 0xff, 0xff, 0xff, 0xff, 0xff, // destination: broadcast
         0x02, 0x00, 0x00, 0x00, 0x00, 0x01, // source
-        0x08, 0x06,                         // EtherType ARP
-        0x00, 0x01,                         // hardware type: Ethernet
-        0x08, 0x00,                         // protocol type: IPv4
-        0x06, 0x04,                         // hardware len, protocol len
-        0x00, 0x01,                         // opcode: request
+        0x08, 0x06, // EtherType ARP
+        0x00, 0x01, // hardware type: Ethernet
+        0x08, 0x00, // protocol type: IPv4
+        0x06, 0x04, // hardware len, protocol len
+        0x00, 0x01, // opcode: request
         0x02, 0x00, 0x00, 0x00, 0x00, 0x01, // sender MAC
-        0x0a, 0x00, 0x00, 0x01,             // sender IP 10.0.0.1
+        0x0a, 0x00, 0x00, 0x01, // sender IP 10.0.0.1
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // target MAC
-        0x0a, 0x00, 0x00, 0x02,             // target IP 10.0.0.2
+        0x0a, 0x00, 0x00, 0x02, // target IP 10.0.0.2
     ];
 
     const IPV4_FRAME: [u8; 16] = [
-        0x02, 0x00, 0x00, 0x00, 0x00, 0x02,
-        0x02, 0x00, 0x00, 0x00, 0x00, 0x01,
-        0x08, 0x00, // EtherType IPv4
+        0x02, 0x00, 0x00, 0x00, 0x00, 0x02, 0x02, 0x00, 0x00, 0x00, 0x00, 0x01, 0x08,
+        0x00, // EtherType IPv4
         0x45, 0x00, // start of an IPv4 header; opaque to this module
     ];
 
     const UNKNOWN_FRAME: [u8; 14] = [
-        0x33, 0x33, 0x00, 0x00, 0x00, 0x01,
-        0x02, 0x00, 0x00, 0x00, 0x00, 0x01,
-        0x86, 0xdd, // IPv6; not Ipv4 or Arp, so Unknown
+        0x33, 0x33, 0x00, 0x00, 0x00, 0x01, 0x02, 0x00, 0x00, 0x00, 0x00, 0x01, 0x86,
+        0xdd, // IPv6; not Ipv4 or Arp, so Unknown
     ];
 
     #[test]
@@ -121,7 +118,10 @@ mod tests {
     fn parse_arp_request() {
         let frame = EthernetFrame::parse(&ARP_REQUEST).unwrap();
         assert_eq!(frame.destination, MacAddress([0xff; 6]));
-        assert_eq!(frame.source, MacAddress([0x02, 0x00, 0x00, 0x00, 0x00, 0x01]));
+        assert_eq!(
+            frame.source,
+            MacAddress([0x02, 0x00, 0x00, 0x00, 0x00, 0x01])
+        );
         assert_eq!(frame.ethertype, EthernetType::Arp);
         assert_eq!(frame.payload, &ARP_REQUEST[14..]);
     }
@@ -133,7 +133,10 @@ mod tests {
             frame.destination,
             MacAddress([0x02, 0x00, 0x00, 0x00, 0x00, 0x02])
         );
-        assert_eq!(frame.source, MacAddress([0x02, 0x00, 0x00, 0x00, 0x00, 0x01]));
+        assert_eq!(
+            frame.source,
+            MacAddress([0x02, 0x00, 0x00, 0x00, 0x00, 0x01])
+        );
         assert_eq!(frame.ethertype, EthernetType::Ipv4);
         assert_eq!(frame.payload, &[0x45, 0x00]);
     }

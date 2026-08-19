@@ -42,7 +42,7 @@ pub fn set_echo_id(message: &mut [u8], id: u16) {
 mod tests {
     use super::*;
 
-     fn echo_request_with_payload(id: u16, seq: u16, payload: &[u8]) -> Vec<u8> {
+    fn echo_request_with_payload(id: u16, seq: u16, payload: &[u8]) -> Vec<u8> {
         let mut req = Vec::with_capacity(8 + payload.len());
         req.push(8); // Echo Request
         req.push(0); // code
@@ -57,7 +57,10 @@ mod tests {
 
     #[test]
     fn rejects_truncated() {
-        assert_eq!(make_echo_reply(&[8, 0, 0, 0, 0, 1, 0]).err(), Some("truncated ICMP echo"));
+        assert_eq!(
+            make_echo_reply(&[8, 0, 0, 0, 0, 1, 0]).err(),
+            Some("truncated ICMP echo")
+        );
     }
 
     #[test]

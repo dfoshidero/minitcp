@@ -2,14 +2,12 @@ use std::path::Path;
 
 use super::args::{parse_drop_list, parse_ipv4, parse_mac};
 use super::config::{DropKind, Partial};
-use super::error::{flag_usage, ParseError, USAGE_CONFIG};
+use super::error::{ParseError, USAGE_CONFIG, flag_usage};
 
 fn toml_string(v: &::toml::Value, key: &str) -> Result<String, ParseError> {
-    v.as_str()
-        .map(str::to_string)
-        .ok_or_else(|| {
-            ParseError::with_usage(format!("config key {key} must be a string"), USAGE_CONFIG)
-        })
+    v.as_str().map(str::to_string).ok_or_else(|| {
+        ParseError::with_usage(format!("config key {key} must be a string"), USAGE_CONFIG)
+    })
 }
 
 fn toml_bool(v: &::toml::Value, key: &str) -> Result<bool, ParseError> {
@@ -81,7 +79,7 @@ pub(crate) fn apply(partial: &mut Partial, table: &::toml::Table) -> Result<(), 
                 return Err(ParseError::with_usage(
                     format!("unknown config key: {other}"),
                     USAGE_CONFIG,
-                ))
+                ));
             }
         }
     }
