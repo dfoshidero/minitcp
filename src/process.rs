@@ -307,9 +307,24 @@ fn display_command(program: &str, args: &[&str]) -> String {
 //   ip link delete -> "Cannot find device \"tap0\""
 //   docker rm      -> "No such container: minitcp-tap"
 
+/// Did this failure mean "that already exists", rather than a real problem?
+///
+/// The obvious phrasings cover `ip addr add` on an address the interface
+/// already has. `ip tuntap add` is the odd one out: asking for a TAP that
+/// exists does not report EEXIST at all, it reports
+/// `ioctl(TUNSETIFF): Device or resource busy` — the driver's way of saying the
+/// name is taken. Without that case, running `minitcp tap up` twice fails, and
+/// so does opening the lab against a TAP that is already up and working
+/// perfectly well.
+///
+/// The busy check is deliberately tied to TUNSETIFF. A bare "resource busy"
+/// from some other `ip` subcommand is a genuine failure and must not be
+/// swallowed.
 fn is_already_exists(detail: &str) -> bool {
     let lower = detail.to_ascii_lowercase();
-    lower.contains("file exists") || lower.contains("already exists")
+    lower.contains("file exists")
+        || lower.contains("already exists")
+        || (lower.contains("tunsetiff") && lower.contains("busy"))
 }
 
 fn is_does_not_exist(detail: &str) -> bool {
@@ -407,6 +422,46 @@ mod tests {
             explained.to_string().contains("Operation not permitted"),
             "{explained}"
         );
+    }
+
+    #[test]
+    fn a_tap_that_already_exists_is_not_an_error() {
+        // iproute2's actual wording when the device name is taken. It is an
+        // EBUSY from the tun driver, not an EEXIST, which is why the obvious
+        // "File exists" check missed it and `minitcp tap up` was not idempotent.
+        check_output(
+            "ip",
+            &[
+                "tuntap", "add", "dev", "tap0", "mode", "tap", "user", "1001",
+            ],
+            failed("ioctl(TUNSETIFF): Device or resource busy"),
+            AllowedFailure::AlreadyExists,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn an_address_the_interface_already_has_is_not_an_error() {
+        check_output(
+            "ip",
+            &["addr", "add", "10.0.0.1/24", "dev", "tap0"],
+            failed("RTNETLINK answers: File exists"),
+            AllowedFailure::AlreadyExists,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_busy_resource_elsewhere_is_still_a_real_failure() {
+        // Only TUNSETIFF's EBUSY means "the name is taken". Swallowing every
+        // "resource busy" would hide genuine failures from other subcommands.
+        check_output(
+            "ip",
+            &["link", "delete", "tap0"],
+            failed("RTNETLINK answers: Device or resource busy"),
+            AllowedFailure::AlreadyExists,
+        )
+        .unwrap_err();
     }
 
     #[test]

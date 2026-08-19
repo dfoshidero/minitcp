@@ -632,12 +632,15 @@ struct Lab {
     arp_out: u32,
 }
 
-/// Make sure the local TAP exists before the stack tries to attach to it.
+/// Report whether the local TAP is there, without touching it.
 ///
-/// The `ip` calls themselves live in `interface::tap::ensure_iface` — the one
-/// implementation shared with `minitcp tap up` and the sidecar. This wrapper
-/// only reports what happened into the External Tools pane.
-fn ensure_tap(cfg: &Config, tx: &Sender<Msg>) {
+/// Opening the lab deliberately does *not* create the TAP. Bringing up a
+/// virtual network device is a real change to the machine — it needs root, and
+/// it outlives the program that made it — so it stays an explicit thing the
+/// user asks for with `minitcp tap up`. It is also the step worth
+/// understanding: a lab that quietly conjures its own wire teaches nothing
+/// about where the wire came from.
+fn report_tap_status(cfg: &Config, tx: &Sender<Msg>) {
     if !cfg.tun.exists() {
         let _ = tx.send(Msg::Action(format!(
             "minitcp: error: {} is missing; run in the Dev Container or a privileged Linux container.",
@@ -646,17 +649,13 @@ fn ensure_tap(cfg: &Config, tx: &Sender<Msg>) {
         return;
     }
 
-    let _ = tx.send(Msg::Action(format!(
-        "$ bringing up {} with {}/24 on the Linux side",
-        cfg.iface, cfg.linux_addr
-    )));
-    match crate::interface::tap::ensure_iface(&cfg.iface, cfg.linux_addr) {
-        Ok(()) => {
-            let _ = tx.send(Msg::Action(format!("{} is up", cfg.iface)));
-        }
-        Err(error) => {
-            let _ = tx.send(Msg::Action(format!("minitcp: error: {error}")));
-        }
+    if Path::new(&format!("/sys/class/net/{}", cfg.iface)).exists() {
+        let _ = tx.send(Msg::Action(format!("attached to {}", cfg.iface)));
+    } else {
+        let _ = tx.send(Msg::Action(format!(
+            "minitcp: error: {} does not exist. Run `minitcp tap up` in another terminal, then press r.",
+            cfg.iface
+        )));
     }
 }
 
@@ -768,7 +767,7 @@ impl Lab {
                 true
             }
             Transport::LocalTap => {
-                ensure_tap(&cfg, &tx);
+                report_tap_status(&cfg, &tx);
                 false
             }
         };
