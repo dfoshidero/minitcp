@@ -41,7 +41,7 @@ fn defaults_match_the_lab() {
     assert_eq!(cfg.addr, Ipv4Addr::new(10, 0, 0, 2));
     assert_eq!(cfg.mac, OUR_MAC);
     assert_eq!(cfg.linux_addr, Ipv4Addr::new(10, 0, 0, 1));
-    assert!(!cfg.quiet);
+    assert!(cfg.verbose);
     assert!(cfg.drop.is_empty());
     assert_eq!(cfg.ttl, 64);
 }
@@ -54,13 +54,13 @@ fn flags_can_sit_before_or_after_stack() {
     assert_eq!(after.command, Command::Stack);
     assert_eq!(before.iface, "tap1");
     assert_eq!(after.iface, "tap1");
-    assert!(before.quiet && after.quiet);
+    assert!(!before.verbose && !after.verbose);
 }
 
 #[test]
 fn quiet_and_once_are_flags() {
     let q = parse_ok(&["--quiet"]);
-    assert!(q.quiet);
+    assert!(!q.verbose);
     let once = parse_ok(&["stack", "--once"]);
     assert_eq!(once.count, Some(1));
     let count = parse_ok(&["-c", "3"]);
@@ -142,7 +142,7 @@ fn toml_sets_addr_and_cli_wins() {
     )
     .unwrap();
     assert_eq!(from_file.addr, Ipv4Addr::new(10, 0, 0, 9));
-    assert!(from_file.quiet);
+    assert!(!from_file.verbose);
 
     let overridden = parse_from(
         &args(&[
@@ -155,7 +155,7 @@ fn toml_sets_addr_and_cli_wins() {
     )
     .unwrap();
     assert_eq!(overridden.addr, Ipv4Addr::new(10, 0, 0, 4));
-    assert!(overridden.quiet);
+    assert!(!overridden.verbose);
     let _ = fs::remove_dir_all(dir);
 }
 

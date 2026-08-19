@@ -10,7 +10,9 @@ mod usage;
 
 use std::path::{Path, PathBuf};
 
-pub use command::{Command, HelpTopic};
+pub use command::Command;
+#[cfg(test)]
+use command::HelpTopic;
 pub use error::ParseError;
 pub use options::{Config, DEFAULT_CONFIG, DropKind, Transport};
 pub use usage::usage_topic;

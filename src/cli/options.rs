@@ -62,7 +62,9 @@ pub struct Config {
     pub tun: PathBuf,
     pub write: Option<PathBuf>,
     pub hex: bool,
-    pub quiet: bool,
+    /// Narrate every layer of every frame. `--quiet` turns it off; the field
+    /// is named for the mode it selects so no call site has to read a negation.
+    pub verbose: bool,
     pub count: Option<u64>,
     pub drop: Vec<DropKind>,
     pub drop_pct: u8,
@@ -86,7 +88,7 @@ impl Config {
             tun: PathBuf::from(DEFAULT_TUN),
             write: None,
             hex: false,
-            quiet: false,
+            verbose: true,
             count: None,
             drop: Vec::new(),
             drop_pct: 0,
@@ -97,10 +99,6 @@ impl Config {
             offline: false,
             config_path: PathBuf::from(DEFAULT_CONFIG),
         }
-    }
-
-    pub fn verbose(&self) -> bool {
-        !self.quiet
     }
 
     /// Decide how Ethernet frames will reach this stack.
@@ -237,7 +235,7 @@ pub(crate) fn apply_partial(base: &mut Config, over: &Partial) {
         base.hex = v;
     }
     if let Some(v) = over.quiet {
-        base.quiet = v;
+        base.verbose = !v;
     }
     if let Some(v) = over.count {
         base.count = Some(v);

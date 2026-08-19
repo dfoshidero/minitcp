@@ -206,7 +206,7 @@ impl Lab {
             }
         };
 
-        let verbose = !cfg.quiet;
+        let verbose = cfg.verbose;
         let mut stack = ChildProc::spawn_stack(&cfg, verbose)?;
         attach_child(&mut stack, tx.clone(), Msg::Stack, Msg::StackStatus);
 
