@@ -17,10 +17,10 @@ docker run --rm -it \
   --cap-add=NET_ADMIN \
   --cap-add=NET_RAW \
   --device=/dev/net/tun \
-  ghcr.io/dfoshidero/minitcp
+  ghcr.io/dfoshidero/minitcp:latest
 ```
 
-That pulls the image on first use, prints `minitcp --help`, and drops you in a shell with `minitcp` on `PATH`. Run `minitcp` for the terminal lab (`q` returns to the shell).
+That pulls the image on first use, opens a shell with `minitcp` on `PATH`, then prints `minitcp --help`. Run `minitcp` for the terminal lab (`q` returns to the shell).
 
 If you really want to, you can pass subcommands on the same `docker run` line, for example add `stack` at the end. You can however also do this directly in the image, `minitcp stack`.
 

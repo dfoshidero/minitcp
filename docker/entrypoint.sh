@@ -1,6 +1,5 @@
 #!/bin/bash
 if [ $# -eq 0 ]; then
-  minitcp --help
-  exec bash
+  exec bash --rcfile /usr/local/share/minitcp-shell.sh
 fi
 exec minitcp "$@"
