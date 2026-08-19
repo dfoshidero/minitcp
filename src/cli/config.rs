@@ -11,16 +11,31 @@ pub const DEFAULT_TUN: &str = "/dev/net/tun";
 pub const DEFAULT_TTL: u8 = 64;
 pub const DEFAULT_CONFIG: &str = "minitcp.toml";
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HelpTopic {
+    Full,
+    Tap,
+    Identity,
+    Pcap,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Command {
     Run,
     Stack,
     Replay(PathBuf),
-    PcapInfo(PathBuf),
-    Help,
+    Pcap(PathBuf),
+    Help(HelpTopic),
     Bridge,
     TapUp,
     TapDown,
+    TapShow,
+    TapSetIface(String),
+    TapSetAddr(Ipv4Addr),
+    TapSetTun(PathBuf),
+    IdentityShow,
+    IdentitySetAddr(Ipv4Addr),
+    IdentitySetMac(MacAddress),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -52,7 +67,6 @@ pub struct Config {
     pub mac: MacAddress,
     pub linux_addr: Ipv4Addr,
     pub tun: PathBuf,
-    pub no_create_tap: bool,
     pub write: Option<PathBuf>,
     pub hex: bool,
     pub quiet: bool,
@@ -62,9 +76,9 @@ pub struct Config {
     pub ttl: u8,
     pub icmp_id: Option<u16>,
     pub fwd: Option<String>,
-    pub force_tap: bool,
     pub listen: String,
     pub offline: bool,
+    pub config_path: PathBuf,
 }
 
 impl Config {
@@ -77,7 +91,6 @@ impl Config {
             mac: OUR_MAC,
             linux_addr: default_linux_addr(addr),
             tun: PathBuf::from(DEFAULT_TUN),
-            no_create_tap: false,
             write: None,
             hex: false,
             quiet: false,
@@ -87,9 +100,9 @@ impl Config {
             ttl: DEFAULT_TTL,
             icmp_id: None,
             fwd: None,
-            force_tap: false,
             listen: crate::interface::fwd::DEFAULT_LISTEN.into(),
             offline: false,
+            config_path: PathBuf::from(DEFAULT_CONFIG),
         }
     }
 
@@ -101,12 +114,8 @@ impl Config {
         !self.quiet
     }
 
-    /// Host stack talks to the TAP sidecar over TCP unless a local TAP is forced
-    /// or `/dev/net/tun` is present (Linux / Dev Container).
+    /// Host stack talks to the TAP sidecar over TCP unless `/dev/net/tun` is here.
     pub fn use_fwd(&self) -> bool {
-        if self.force_tap {
-            return false;
-        }
         if self.fwd.is_some() {
             return true;
         }
@@ -132,9 +141,6 @@ impl Config {
         args.push(self.linux_addr.to_string());
         args.push("--tun".into());
         args.push(self.tun.display().to_string());
-        if self.no_create_tap {
-            args.push("--no-create-tap".into());
-        }
         if let Some(path) = &self.write {
             args.push("--write".into());
             args.push(path.display().to_string());
@@ -177,9 +183,6 @@ impl Config {
             args.push("--fwd".into());
             args.push(fwd.clone());
         }
-        if self.force_tap {
-            args.push("--tap".into());
-        }
         args
     }
 }
@@ -192,7 +195,6 @@ pub(crate) struct Partial {
     pub mac: Option<MacAddress>,
     pub linux_addr: Option<Ipv4Addr>,
     pub tun: Option<PathBuf>,
-    pub no_create_tap: Option<bool>,
     pub write: Option<PathBuf>,
     pub hex: Option<bool>,
     pub quiet: Option<bool>,
@@ -203,7 +205,6 @@ pub(crate) struct Partial {
     pub icmp_id: Option<u16>,
     pub config: Option<PathBuf>,
     pub fwd: Option<String>,
-    pub force_tap: Option<bool>,
     pub listen: Option<String>,
     pub offline: Option<bool>,
 }
@@ -228,9 +229,6 @@ pub(crate) fn apply_partial(base: &mut Config, over: &Partial) {
     }
     if let Some(v) = &over.tun {
         base.tun = v.clone();
-    }
-    if let Some(v) = over.no_create_tap {
-        base.no_create_tap = v;
     }
     if let Some(v) = &over.write {
         base.write = Some(v.clone());
@@ -258,9 +256,6 @@ pub(crate) fn apply_partial(base: &mut Config, over: &Partial) {
     }
     if let Some(v) = &over.fwd {
         base.fwd = Some(v.clone());
-    }
-    if let Some(v) = over.force_tap {
-        base.force_tap = v;
     }
     if let Some(v) = &over.listen {
         base.listen = v.clone();

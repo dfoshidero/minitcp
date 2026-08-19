@@ -397,13 +397,6 @@ fn ensure_tap(cfg: &Config, tx: &Sender<Msg>) {
 
     let sys = format!("/sys/class/net/{}", cfg.iface);
     if !Path::new(&sys).exists() {
-        if cfg.no_create_tap {
-            let _ = tx.send(Msg::Action(format!(
-                "{} is missing and --no-create-tap is set",
-                cfg.iface
-            )));
-            return;
-        }
         let user = Command::new("id")
             .args(["-un"])
             .output()

@@ -37,9 +37,6 @@ pub(crate) fn apply(partial: &mut Partial, table: &::toml::Table) -> Result<(), 
                 partial.linux_addr = Some(parse_ipv4(&toml_string(value, key)?)?)
             }
             "tun" => partial.tun = Some(std::path::PathBuf::from(toml_string(value, key)?)),
-            "no_create_tap" | "no-create-tap" => {
-                partial.no_create_tap = Some(toml_bool(value, key)?)
-            }
             "write" => partial.write = Some(std::path::PathBuf::from(toml_string(value, key)?)),
             "hex" => partial.hex = Some(toml_bool(value, key)?),
             "quiet" => partial.quiet = Some(toml_bool(value, key)?),
@@ -125,4 +122,21 @@ pub(crate) fn load(path: &Path) -> Result<::toml::Table, ParseError> {
             USAGE_CONFIG,
         )
     })
+}
+
+pub(crate) fn set_string(path: &Path, key: &str, value: &str) -> Result<(), ParseError> {
+    let mut table = if path.is_file() {
+        load(path)?
+    } else {
+        ::toml::Table::new()
+    };
+    table.insert(key.to_string(), ::toml::Value::String(value.to_string()));
+    let text = ::toml::to_string_pretty(&table)
+        .map_err(|e| ParseError::msg(format!("could not write {}: {e}", path.display())))?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)
+            .map_err(|e| ParseError::msg(format!("could not create {}: {e}", dir.display())))?;
+    }
+    std::fs::write(path, text)
+        .map_err(|e| ParseError::msg(format!("could not write {}: {e}", path.display())))
 }

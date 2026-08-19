@@ -44,7 +44,6 @@ fn defaults_match_the_lab() {
     assert!(!cfg.quiet);
     assert!(cfg.drop.is_empty());
     assert_eq!(cfg.ttl, 64);
-    assert!(!cfg.no_create_tap);
 }
 
 #[test]
@@ -108,11 +107,6 @@ fn linux_addr_defaults_to_dot_one_on_the_same_street() {
     assert_eq!(cfg.linux_addr, Ipv4Addr::new(10, 1, 2, 1));
     let explicit = parse_ok(&["--addr", "10.1.2.9", "--linux-addr", "10.1.2.5"]);
     assert_eq!(explicit.linux_addr, Ipv4Addr::new(10, 1, 2, 5));
-}
-
-#[test]
-fn no_create_tap_parses() {
-    assert!(parse_ok(&["--no-create-tap"]).no_create_tap);
 }
 
 #[test]
@@ -190,14 +184,75 @@ fn default_minitcp_toml_in_cwd_is_loaded() {
 }
 
 #[test]
-fn tap_up_and_down_and_bridge_parse() {
+fn tap_family_parses() {
     assert_eq!(parse_ok(&["tap", "up"]).command, Command::TapUp);
     assert_eq!(parse_ok(&["tap", "down"]).command, Command::TapDown);
     assert_eq!(parse_ok(&["bridge"]).command, Command::Bridge);
-    let err = parse_err(&["tap"]);
-    assert!(err.contains("tap needs up or down"), "{err}");
+    assert_eq!(parse_ok(&["tap"]).command, Command::TapShow);
+    assert_eq!(
+        parse_ok(&["tap", "--help"]).command,
+        Command::Help(HelpTopic::Tap)
+    );
+    let err = parse_err(&["tap", "nope"]);
+    assert!(err.contains("usage: minitcp tap"), "{err}");
+    assert!(!err.contains("needs a value"), "{err}");
+    assert!(!err.contains("error:"), "{err}");
+    let set = parse_ok(&["tap", "addr", "10.0.0.9"]);
+    assert_eq!(set.command, Command::TapSetAddr(Ipv4Addr::new(10, 0, 0, 9)));
+}
+
+#[test]
+fn pcap_and_replay_parse() {
+    let cfg = parse_ok(&["pcap", "out.pcap"]);
+    assert_eq!(cfg.command, Command::Pcap(PathBuf::from("out.pcap")));
+    let alias = parse_ok(&["pcap-info", "out.pcap"]);
+    assert_eq!(alias.command, Command::Pcap(PathBuf::from("out.pcap")));
+    let err = parse_err(&["pcap"]);
+    assert!(err.contains("usage: minitcp pcap FILE"), "{err}");
+    assert!(!err.contains("needs a value"), "{err}");
+}
+
+#[test]
+fn identity_parses_and_writes_toml() {
+    assert_eq!(parse_ok(&["identity"]).command, Command::IdentityShow);
+    assert_eq!(
+        parse_ok(&["identity", "--help"]).command,
+        Command::Help(HelpTopic::Identity)
+    );
+    let dir = unique_dir();
+    let path = dir.join("minitcp.toml");
+    let cfg = parse_from(
+        &args(&[
+            "--config",
+            path.to_str().unwrap(),
+            "identity",
+            "addr",
+            "10.0.0.9",
+        ]),
+        &dir,
+    )
+    .unwrap();
+    assert_eq!(
+        cfg.command,
+        Command::IdentitySetAddr(Ipv4Addr::new(10, 0, 0, 9))
+    );
+    write_config_key(&cfg, "addr", "10.0.0.9").unwrap();
+    let text = fs::read_to_string(&path).unwrap();
+    assert!(text.contains("10.0.0.9"), "{text}");
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn fwd_and_offline_parse() {
     let fwd = parse_ok(&["--fwd", "127.0.0.1:7946"]);
     assert_eq!(fwd.fwd.as_deref(), Some("127.0.0.1:7946"));
     assert!(parse_ok(&["--offline"]).offline);
-    assert!(parse_ok(&["--tap"]).force_tap);
+}
+
+#[test]
+fn force_tap_and_no_create_are_gone() {
+    let err = parse_err(&["--tap"]);
+    assert!(err.contains("unknown flag '--tap'"), "{err}");
+    let err = parse_err(&["--no-create-tap"]);
+    assert!(err.contains("unknown flag '--no-create-tap'"), "{err}");
 }

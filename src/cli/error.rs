@@ -4,16 +4,20 @@ use std::io::IsTerminal;
 
 use crossterm::style::Stylize;
 
+use super::config::HelpTopic;
+
 pub(crate) const TRY_HELP: &str = "Try 'minitcp --help' for the full list.";
 
 pub(crate) const USAGE_COMMANDS: &str = "\
 usage:
-  minitcp [run]           terminal UI (default) | run is the same
-  minitcp stack           TAP loop only (no UI)
-  minitcp tap up|down     start/stop the TAP sidecar (Docker)
-  minitcp bridge          TAP <-> frames on :7946 (inside the sidecar)
-  minitcp replay FILE     play a pcap instead of TAP
-  minitcp pcap-info FILE  list frames in a pcap (no stack)";
+  minitcp [run]              terminal UI (default)
+  minitcp stack              TAP loop only (no UI)
+  minitcp replay FILE        same loop, from a pcap
+  minitcp tap                the virtual cable
+    up | down | iface | addr | tun
+  minitcp identity           MiniTCP on the wire
+    addr | mac
+  minitcp pcap FILE          list frames (no stack)";
 
 pub(crate) const USAGE_REPLAY: &str = "\
 usage: minitcp replay FILE
@@ -21,18 +25,32 @@ usage: minitcp replay FILE
 
 example: minitcp replay out.pcap -q";
 
-pub(crate) const USAGE_PCAP_INFO: &str = "\
-usage: minitcp pcap-info FILE
+pub(crate) const USAGE_PCAP: &str = "\
+usage: minitcp pcap FILE
   list frames in a pcap (no stack)
 
-example: minitcp pcap-info out.pcap";
+example: minitcp pcap out.pcap";
 
 pub(crate) const USAGE_TAP: &str = "\
-usage: minitcp tap up|down
-  tap up    start the TAP sidecar (Docker) or a local Linux TAP
-  tap down  stop it
+usage: minitcp tap <command>
+
+  up            start sidecar or local TAP
+  down          stop it
+  iface NAME    which TAP (default: tap0)
+  addr IP       Linux's IPv4 on that TAP
+  tun PATH      tun device (default: /dev/net/tun)
 
 example: minitcp tap up";
+
+pub(crate) const USAGE_IDENTITY: &str = "\
+usage: minitcp identity [command]
+
+  addr IP     MiniTCP's IPv4 (default: 10.0.0.2)
+  mac MAC     MiniTCP's MAC
+
+No command prints the current identity. Setters write minitcp.toml.
+
+example: minitcp identity addr 10.0.0.3";
 
 pub(crate) const USAGE_CONFIG: &str = "\
 usage: --config FILE           TOML instead of ./minitcp.toml
@@ -60,10 +78,20 @@ impl ParseError {
         }
     }
 
+    /// Family help only — no `error:` prefix.
+    pub(crate) fn usage_only(usage: impl Into<String>) -> Self {
+        Self {
+            message: String::new(),
+            usage: Some(usage.into()),
+        }
+    }
+
     pub fn report(&self) -> String {
-        match &self.usage {
-            Some(usage) => format!("error: {}\n\n{usage}\n", self.message),
-            None => format!("error: {}\n\n{TRY_HELP}\n", self.message),
+        match (&self.message.is_empty(), &self.usage) {
+            (true, Some(usage)) => format!("{usage}\n"),
+            (false, Some(usage)) => format!("error: {}\n\n{usage}\n", self.message),
+            (false, None) => format!("error: {}\n\n{TRY_HELP}\n", self.message),
+            (true, None) => format!("{TRY_HELP}\n"),
         }
     }
 }
@@ -95,11 +123,15 @@ pub(crate) fn flag_usage(flag: &str) -> &'static str {
             "usage: --linux-addr IP         Linux's IPv4 on that TAP (default: same street, .1)"
         }
         "--tun" => "usage: --tun PATH              tun device (default: /dev/net/tun)",
-        "--fwd" => "usage: --fwd HOST:PORT         stack over TCP frames (default: 127.0.0.1:7946)",
+        "--fwd" => {
+            "usage: --fwd HOST:PORT         talk to the TAP sidecar over TCP (default: 127.0.0.1:7946)"
+        }
         "--listen" => {
             "usage: --listen ADDR           bridge listen address (default: 0.0.0.0:7946)"
         }
         "tap" => USAGE_TAP,
+        "identity" => USAGE_IDENTITY,
+        "pcap" | "pcap-info" => USAGE_PCAP,
         "--write" => "usage: --write FILE            also save frames to a pcap",
         "--config" => USAGE_CONFIG,
         "--drop" => "usage: --drop arp|icmp|ip      ignore that kind of frame (comma-ok: arp,icmp)",
@@ -112,13 +144,21 @@ pub(crate) fn flag_usage(flag: &str) -> &'static str {
         }
         "-c" | "--count" => "usage: -c, --count N           stop after N frames (stack/replay)",
         "replay" => USAGE_REPLAY,
-        "pcap-info" => USAGE_PCAP_INFO,
         _ => TRY_HELP,
     }
 }
 
 pub(crate) fn missing_value(flag: &str) -> ParseError {
     ParseError::with_usage(format!("{flag} needs a value"), flag_usage(flag))
+}
+
+pub fn usage_topic(topic: HelpTopic) -> String {
+    match topic {
+        HelpTopic::Full => usage(),
+        HelpTopic::Tap => format!("{USAGE_TAP}\n"),
+        HelpTopic::Identity => format!("{USAGE_IDENTITY}\n"),
+        HelpTopic::Pcap => format!("{USAGE_PCAP}\n"),
+    }
 }
 
 pub fn usage() -> String {
@@ -142,81 +182,61 @@ pub fn usage() -> String {
 
 	{install}
 
-	{run}           terminal UI (default) | run is the same
-	{stack}           TAP loop only (no UI)
-	{tap}     start/stop the TAP sidecar (needs Docker)
-	{bridge}        TAP <-> TCP frames; used by the sidecar image
-	{replay}     play a pcap instead of TAP
-	{pcap_info}  list frames in a pcap (no stack)
+	{run}                 terminal UI (default)
+	{stack}                 TAP loop only (no UI)
+	{replay}           same loop, from a pcap
 
-Everything below is optional.
+	{tap}                   the virtual cable
+	  {tap_up}                          start sidecar or local TAP
+	  {tap_down}                        stop it
+	  {tap_iface}                  which TAP (default: tap0)
+	  {tap_addr}                     Linux's IPv4 on that TAP
+	  {tap_tun}                    tun device (default: /dev/net/tun)
 
-Cable and identity:
-	--iface NAME            which TAP (default: tap0)
-	--addr IP               MiniTCP's IPv4 (default: 10.0.0.2)
-	--mac MAC               MiniTCP's MAC (default: 02:00:00:00:00:02)
-	                        change with --addr only if two MiniTCPs share one TAP
-	--linux-addr IP         Linux's IPv4 on that TAP (default: same street, .1)
-	--tun PATH              tun device (default: /dev/net/tun)
-	--fwd HOST:PORT         stack over TCP frames (default: 127.0.0.1:7946)
-	--listen ADDR           bridge listen address (default: 0.0.0.0:7946)
-	--tap                   force a local TAP even if a sidecar is available
-	--no-create-tap         do not create the TAP; fail if it is missing
-	--config FILE           TOML instead of ./minitcp.toml
+	{identity}              MiniTCP on the wire
+	  {id_addr}                     MiniTCP's IPv4 (default: 10.0.0.2)
+	  {id_mac}                     MiniTCP's MAC
 
-Captures:
-	--write FILE            also save frames to a pcap
-	--hex                   read hex Ethernet frames from stdin (stack)
+	{pcap}             list frames (no stack)
 
-Lab knobs:
-	-q, --quiet             one line per exchange
-	-c, --count N           stop after N frames (stack/replay)
-	--once                  same as -c 1
-	--drop arp|icmp|ip      ignore that kind of frame (comma-ok: arp,icmp)
-	--drop-pct N            drop N percent of frames at random (0-100)
-	--ttl N                 hop count on MiniTCP's IPv4 replies (default: 64)
-	--id N                  ICMP echo id on replies (default: copy from request)
-	--offline               skip the GitHub update check
+	{quiet}                   one line per exchange
+	{count}                 stop after N frames (stack/replay)
+	{write}                  also save frames to a pcap
+	{drop}            ignore that kind of frame
+	{fwd}               talk to the TAP sidecar over TCP
+	{offline}                     don't check GitHub for a newer minitcp
 
-Config file if needed — same flags.
+Same knobs can live in minitcp.toml in this directory, or --config FILE.
+Command line wins over the file. identity / tap setters write that file.
 
 	# minitcp.toml
 	iface = \"tap1\"
 	addr = \"10.0.0.3\"
 	quiet = true
 	drop = [\"icmp\"]
-
-Examples (typical combinations):
-	{ex1}
-	{ex2}
-	{ex3}
-	{ex4}
-	{ex5}
-	{ex6}
-	{ex7}
-	{ex8}
-	{ex9}
-	{ex10}
 ",
         install = cmd(
             "curl -fsSL https://github.com/dfoshidero/minitcp/releases/latest/download/install.sh | sh"
         ),
         run = cmd("minitcp [run]"),
         stack = cmd("minitcp stack"),
-        tap = cmd("minitcp tap up|down"),
-        bridge = cmd("minitcp bridge"),
         replay = cmd("minitcp replay FILE"),
-        pcap_info = cmd("minitcp pcap-info FILE"),
-        ex1 = cmd("minitcp tap up"),
-        ex2 = cmd("minitcp"),
-        ex3 = cmd("minitcp tap down"),
-        ex4 = cmd("minitcp -q"),
-        ex5 = cmd("minitcp --iface tap1"),
-        ex6 = cmd("minitcp stack --write out.pcap"),
-        ex7 = cmd("minitcp replay out.pcap -q"),
-        ex8 = cmd("minitcp pcap-info out.pcap"),
-        ex9 = cmd("minitcp stack --drop icmp -c 5"),
-        ex10 = cmd("minitcp --config ./lab.toml stack"),
+        tap = cmd("minitcp tap"),
+        tap_up = cmd("up"),
+        tap_down = cmd("down"),
+        tap_iface = cmd("iface NAME"),
+        tap_addr = cmd("addr IP"),
+        tap_tun = cmd("tun PATH"),
+        identity = cmd("minitcp identity"),
+        id_addr = cmd("addr IP"),
+        id_mac = cmd("mac MAC"),
+        pcap = cmd("minitcp pcap FILE"),
+        quiet = cmd("--quiet, -q"),
+        count = cmd("-c, --count N"),
+        write = cmd("--write FILE"),
+        drop = cmd("--drop arp|icmp|ip"),
+        fwd = cmd("--fwd HOST:PORT"),
+        offline = cmd("--offline"),
     )
 }
 
@@ -228,14 +248,20 @@ mod tests {
     fn help_text_names_the_new_commands() {
         let text = usage();
         assert!(text.contains("replay"));
-        assert!(text.contains("tap up"));
-        assert!(text.contains("bridge"));
+        assert!(text.contains("minitcp tap"));
+        assert!(text.contains("iface NAME"));
+        assert!(text.contains("minitcp identity"));
+        assert!(text.contains("minitcp pcap FILE"));
         assert!(text.contains("install.sh"));
         assert!(text.contains("--fwd"));
-        assert!(text.contains("--iface"));
+        assert!(text.contains("--quiet"));
+        assert!(text.contains("-q"));
         assert!(text.contains("--drop"));
-        assert!(text.contains("--config"));
+        assert!(text.contains("--config FILE"));
         assert!(text.contains("minitcp.toml"));
+        assert!(!text.contains("minitcp bridge"));
         assert!(!text.contains("docker run"));
+        assert!(!text.contains("--no-create-tap"));
+        assert!(!text.contains("force a local TAP"));
     }
 }

@@ -145,13 +145,14 @@ Press `p` to ping `10.0.0.2`. You should see replies from MiniTCP (`64 bytes fro
 
 Everything is optional. Defaults are the lab above (`tap0`, MiniTCP `10.0.0.2` / `02:00:00:00:00:02`, Linux `10.0.0.1`). `minitcp --help` lists commands and flags.
 
-IP and MAC are independent: change `--addr` without `--mac` unless two MiniTCP processes share the same TAP.
+IP and MAC are MiniTCP's identity (`minitcp identity addr` / `mac`). The cable is `minitcp tap iface` / `addr` / `tun`. One-shot `--addr` and `--iface` still override a single run.
 
 ```bash
-minitcp --iface tap1
-minitcp --addr 10.0.0.3 --mac 02:00:00:00:00:03
+minitcp --quiet
+minitcp tap iface tap1
 minitcp stack --write out.pcap
 minitcp replay out.pcap -q
+minitcp pcap out.pcap
 minitcp stack --drop icmp -c 5
 ```
 
@@ -172,7 +173,7 @@ A **pcap** is a file of Ethernet frames, the same format tcpdump and Wireshark u
 
 ```bash
 minitcp stack --write out.pcap -q    # record while pinging in another terminal
-minitcp pcap-info out.pcap           # list each frame's EtherType
+minitcp pcap out.pcap                # list each frame's EtherType
 minitcp replay out.pcap -q           # feed those frames to the stack again
 ```
 
@@ -268,7 +269,7 @@ IPv4 notes that are easy to miss:
 - `docker/Dockerfile` — TAP sidecar image (`ghcr.io/dfoshidero/minitcp`). The Dev Container image is `.devcontainer/Dockerfile`.
 - `scripts/install.sh` — one-line install of the host binary from GitHub Releases.
 - `scripts/setup-tap.sh` — manually create and bring up `tap0` in the Dev Container; the lab does this automatically.
-- `src/main.rs` — command dispatcher: terminal lab by default, `stack`, `tap up`/`down`, `bridge`, `replay`, `pcap-info`.
+- `src/main.rs` — command dispatcher: terminal lab by default, `stack`, `tap`, `identity`, `replay`, `pcap`.
 - `src/cli/` — flags, `minitcp.toml`, `--help`, and parse errors.
 - `src/stack.rs` — frame loop: TAP, TCP sidecar frames, pcap, or hex; dispatch to a protocol; write a reply.
 - `src/tapcmd.rs` — host `tap up` / `tap down` (Docker sidecar or local Linux TAP).
@@ -277,7 +278,7 @@ IPv4 notes that are easy to miss:
 - `src/tui/` — terminal UI: split panes, child processes, key actions, and scrollback.
 - `src/interface/tap.rs` — open `/dev/net/tun`, read/write raw frames. No protocol parsing.
 - `src/interface/fwd.rs` — length-prefixed Ethernet frames over TCP (sidecar).
-- `src/interface/pcap.rs` — classic pcap read/write, `pcap-info`, and hex frames.
+- `src/interface/pcap.rs` — classic pcap read/write, `pcap`, and hex frames.
 - `src/proto/` — wire formats MiniTCP speaks:
   - `ethernet.rs` — Ethernet II: destination MAC, source MAC, EtherType, payload.
   - `arp.rs` — answer "who has `10.0.0.2`?" with MiniTCP's MAC.

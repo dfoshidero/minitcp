@@ -129,9 +129,7 @@ fn open_tap(cfg: &Config) -> TapInterface {
 }
 
 pub fn run_bridge(cfg: Config) -> std::io::Result<()> {
-    if !cfg.no_create_tap {
-        crate::interface::tap::ensure_iface(&cfg.iface, cfg.linux_addr)?;
-    }
+    crate::interface::tap::ensure_iface(&cfg.iface, cfg.linux_addr)?;
     let tap = open_tap(&cfg);
     crate::interface::fwd::run_bridge(&cfg.listen, tap)
 }

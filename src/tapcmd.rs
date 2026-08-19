@@ -22,7 +22,7 @@ pub fn tap_up(cfg: &Config) -> io::Result<()> {
     ))
 }
 
-pub fn tap_down() -> io::Result<()> {
+pub fn tap_down(cfg: &Config) -> io::Result<()> {
     if docker_ok() {
         let status = Command::new("docker")
             .args(["rm", "-f", CONTAINER])
@@ -34,9 +34,9 @@ pub fn tap_down() -> io::Result<()> {
     }
     if cfg!(target_os = "linux") {
         let _ = Command::new("sudo")
-            .args(["ip", "link", "delete", "tap0"])
+            .args(["ip", "link", "delete", &cfg.iface])
             .status();
-        eprintln!("removed tap0 if it existed");
+        eprintln!("removed {} if it existed", cfg.iface);
         return Ok(());
     }
     Ok(())
@@ -70,7 +70,7 @@ fn docker_up(cfg: &Config) -> io::Result<()> {
         .status();
 
     let port = DEFAULT_FWD.split(':').next_back().unwrap_or("7946");
-    let mut args = vec![
+    let args = vec![
         "run".into(),
         "-d".into(),
         "--name".into(),
@@ -91,9 +91,6 @@ fn docker_up(cfg: &Config) -> io::Result<()> {
         "--listen".into(),
         format!("0.0.0.0:{port}"),
     ];
-    if cfg.no_create_tap {
-        args.push("--no-create-tap".into());
-    }
     let status = Command::new("docker").args(&args).status()?;
     if !status.success() {
         return Err(io::Error::other("TAP sidecar failed to start"));

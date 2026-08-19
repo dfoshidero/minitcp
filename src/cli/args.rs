@@ -3,10 +3,19 @@ use std::path::PathBuf;
 
 use crate::proto::ethernet::MacAddress;
 
-use super::config::{Command, DropKind, Partial};
+use super::config::{Command, DropKind, HelpTopic, Partial};
 use super::error::{
-    ParseError, USAGE_COMMANDS, USAGE_PCAP_INFO, USAGE_REPLAY, USAGE_TAP, flag_usage, missing_value,
+    ParseError, USAGE_COMMANDS, USAGE_IDENTITY, USAGE_PCAP, USAGE_REPLAY, USAGE_TAP, flag_usage,
+    missing_value,
 };
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Family {
+    None,
+    Tap,
+    Identity,
+    Pcap,
+}
 
 pub fn parse_mac(s: &str) -> Result<MacAddress, String> {
     let sep = if s.contains(':') {
@@ -63,13 +72,28 @@ fn split_eq(arg: &str) -> Option<(&str, &str)> {
     arg.split_once('=')
 }
 
+fn peek(args: &[String], i: usize) -> Option<&str> {
+    args.get(i + 1).map(String::as_str)
+}
+
+fn is_help(s: &str) -> bool {
+    s == "-h" || s == "--help"
+}
+
 pub(crate) fn parse_cli(args: &[String]) -> Result<Partial, ParseError> {
     let mut partial = Partial::default();
+    let mut family = Family::None;
     let mut i = 0;
     while i < args.len() {
         let arg = args[i].as_str();
-        if arg == "-h" || arg == "--help" {
-            partial.command = Some(Command::Help);
+        if is_help(arg) {
+            let topic = match family {
+                Family::None => HelpTopic::Full,
+                Family::Tap => HelpTopic::Tap,
+                Family::Identity => HelpTopic::Identity,
+                Family::Pcap => HelpTopic::Pcap,
+            };
+            set_command(&mut partial, Command::Help(topic))?;
             i += 1;
             continue;
         }
@@ -82,8 +106,6 @@ pub(crate) fn parse_cli(args: &[String]) -> Result<Partial, ParseError> {
             match arg {
                 "-q" | "--quiet" => partial.quiet = Some(true),
                 "--hex" => partial.hex = Some(true),
-                "--no-create-tap" => partial.no_create_tap = Some(true),
-                "--tap" => partial.force_tap = Some(true),
                 "--offline" => partial.offline = Some(true),
                 "--once" => partial.count = Some(1),
                 "-c" | "--count" => {
@@ -104,7 +126,9 @@ pub(crate) fn parse_cli(args: &[String]) -> Result<Partial, ParseError> {
             continue;
         }
         match arg {
-            "help" if partial.command.is_none() => partial.command = Some(Command::Help),
+            "help" if partial.command.is_none() => {
+                set_command(&mut partial, Command::Help(HelpTopic::Full))?;
+            }
             "run" => set_command(&mut partial, Command::Run)?,
             "stack" => set_command(&mut partial, Command::Stack)?,
             "replay" => {
@@ -113,26 +137,29 @@ pub(crate) fn parse_cli(args: &[String]) -> Result<Partial, ParseError> {
                 })?;
                 set_command(&mut partial, Command::Replay(PathBuf::from(file)))?;
             }
-            "pcap-info" => {
-                let file = take_value(args, &mut i, "pcap-info").map_err(|_| {
-                    ParseError::with_usage("pcap-info needs a pcap path", USAGE_PCAP_INFO)
-                })?;
-                set_command(&mut partial, Command::PcapInfo(PathBuf::from(file)))?;
+            "pcap" | "pcap-info" => {
+                family = Family::Pcap;
+                match peek(args, i) {
+                    None => return Err(ParseError::usage_only(USAGE_PCAP)),
+                    Some(next) if is_help(next) => {}
+                    Some(next) if next.starts_with('-') => {
+                        return Err(ParseError::usage_only(USAGE_PCAP));
+                    }
+                    Some(_) => {
+                        let file = take_value(args, &mut i, "pcap")
+                            .map_err(|_| ParseError::usage_only(USAGE_PCAP))?;
+                        set_command(&mut partial, Command::Pcap(PathBuf::from(file)))?;
+                    }
+                }
             }
             "bridge" => set_command(&mut partial, Command::Bridge)?,
             "tap" => {
-                let sub = take_value(args, &mut i, "tap")
-                    .map_err(|_| ParseError::with_usage("tap needs up or down", USAGE_TAP))?;
-                match sub {
-                    "up" => set_command(&mut partial, Command::TapUp)?,
-                    "down" => set_command(&mut partial, Command::TapDown)?,
-                    other => {
-                        return Err(ParseError::with_usage(
-                            format!("unknown tap command '{other}' (want up or down)"),
-                            USAGE_TAP,
-                        ));
-                    }
-                }
+                family = Family::Tap;
+                parse_tap(args, &mut i, &mut partial)?;
+            }
+            "identity" => {
+                family = Family::Identity;
+                parse_identity(args, &mut i, &mut partial)?;
             }
             other => {
                 return Err(ParseError::with_usage(
@@ -146,13 +173,78 @@ pub(crate) fn parse_cli(args: &[String]) -> Result<Partial, ParseError> {
     Ok(partial)
 }
 
+fn parse_tap(args: &[String], i: &mut usize, partial: &mut Partial) -> Result<(), ParseError> {
+    match peek(args, *i) {
+        None => set_command(partial, Command::TapShow),
+        Some(next) if is_help(next) => Ok(()),
+        Some(next) if next.starts_with('-') => set_command(partial, Command::TapShow),
+        Some("up") => {
+            *i += 1;
+            set_command(partial, Command::TapUp)
+        }
+        Some("down") => {
+            *i += 1;
+            set_command(partial, Command::TapDown)
+        }
+        Some("iface") => {
+            *i += 1;
+            let name =
+                take_value(args, i, "tap iface").map_err(|_| ParseError::usage_only(USAGE_TAP))?;
+            set_command(partial, Command::TapSetIface(name.to_string()))
+        }
+        Some("addr") => {
+            *i += 1;
+            let ip =
+                take_value(args, i, "tap addr").map_err(|_| ParseError::usage_only(USAGE_TAP))?;
+            set_command(partial, Command::TapSetAddr(parse_ipv4(ip)?))
+        }
+        Some("tun") => {
+            *i += 1;
+            let path =
+                take_value(args, i, "tap tun").map_err(|_| ParseError::usage_only(USAGE_TAP))?;
+            set_command(partial, Command::TapSetTun(PathBuf::from(path)))
+        }
+        Some(_) => {
+            *i += 1;
+            Err(ParseError::usage_only(USAGE_TAP))
+        }
+    }
+}
+
+fn parse_identity(args: &[String], i: &mut usize, partial: &mut Partial) -> Result<(), ParseError> {
+    match peek(args, *i) {
+        None => set_command(partial, Command::IdentityShow),
+        Some(next) if is_help(next) => Ok(()),
+        Some(next) if next.starts_with('-') => set_command(partial, Command::IdentityShow),
+        Some("addr") => {
+            *i += 1;
+            let ip = take_value(args, i, "identity addr")
+                .map_err(|_| ParseError::usage_only(USAGE_IDENTITY))?;
+            set_command(partial, Command::IdentitySetAddr(parse_ipv4(ip)?))
+        }
+        Some("mac") => {
+            *i += 1;
+            let mac = take_value(args, i, "identity mac")
+                .map_err(|_| ParseError::usage_only(USAGE_IDENTITY))?;
+            set_command(
+                partial,
+                Command::IdentitySetMac(parse_mac(mac).map_err(ParseError::msg)?),
+            )
+        }
+        Some(_) => {
+            *i += 1;
+            Err(ParseError::usage_only(USAGE_IDENTITY))
+        }
+    }
+}
+
 fn set_command(partial: &mut Partial, command: Command) -> Result<(), ParseError> {
     match &partial.command {
         None => {
             partial.command = Some(command);
             Ok(())
         }
-        Some(Command::Help) => Ok(()),
+        Some(Command::Help(_)) => Ok(()),
         Some(_) => Err(ParseError::with_usage(
             "only one command is allowed",
             USAGE_COMMANDS,
@@ -165,8 +257,6 @@ fn apply_flag(partial: &mut Partial, flag: &str, value: Option<&str>) -> Result<
     match flag {
         "--quiet" => partial.quiet = Some(true),
         "--hex" => partial.hex = Some(true),
-        "--no-create-tap" => partial.no_create_tap = Some(true),
-        "--tap" => partial.force_tap = Some(true),
         "--offline" => partial.offline = Some(true),
         "--once" => partial.count = Some(1),
         "--fwd" => partial.fwd = Some(need()?.to_string()),
