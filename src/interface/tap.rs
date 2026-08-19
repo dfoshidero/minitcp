@@ -52,26 +52,35 @@ pub fn ensure_iface(name: &str, linux_addr: std::net::Ipv4Addr) -> io::Result<()
     }
     #[cfg(target_os = "linux")]
     {
+        use crate::process::AllowedFailure;
+
         let user = std::env::var("USER").unwrap_or_else(|_| "root".into());
-        let _ = std::process::Command::new("ip")
-            .args(["tuntap", "add", "dev", name, "mode", "tap", "user", &user])
-            .status();
-        let _ = std::process::Command::new("sudo")
-            .args([
-                "ip", "tuntap", "add", "dev", name, "mode", "tap", "user", &user,
-            ])
-            .status();
+        let add = ["tuntap", "add", "dev", name, "mode", "tap", "user", &user];
+        run_ip(&add, AllowedFailure::AlreadyExists)?;
         let cidr = format!("{linux_addr}/24");
-        let _ = std::process::Command::new("sudo")
-            .args(["ip", "addr", "add", &cidr, "dev", name])
-            .status();
-        let st = std::process::Command::new("sudo")
-            .args(["ip", "link", "set", "dev", name, "up"])
-            .status()?;
-        if !st.success() {
-            return Err(io::Error::other(format!("could not bring {name} up")));
-        }
+        run_ip(
+            &["addr", "add", &cidr, "dev", name],
+            AllowedFailure::AlreadyExists,
+        )?;
+        run_ip(&["link", "set", "dev", name, "up"], AllowedFailure::None)?;
         Ok(())
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn run_ip(args: &[&str], allowed: crate::process::AllowedFailure) -> io::Result<()> {
+    use crate::process::run_checked;
+
+    match run_checked("ip", args, allowed) {
+        Ok(()) => Ok(()),
+        Err(direct_error) => {
+            let sudo_args: Vec<_> = std::iter::once("ip").chain(args.iter().copied()).collect();
+            run_checked("sudo", &sudo_args, allowed).map_err(|sudo_error| {
+                io::Error::other(format!(
+                    "could not configure TAP directly ({direct_error}); sudo also failed ({sudo_error})"
+                ))
+            })
+        }
     }
 }
 
@@ -83,7 +92,7 @@ fn linux_open(tun: &Path, name: &str) -> io::Result<TapInterface> {
     const IFF_TAP: libc::c_short = 0x0002;
     const IFF_NO_PI: libc::c_short = 0x1000;
 
-    if name.is_empty() || name.len() >= libc::IFNAMSIZ as usize {
+    if name.is_empty() || name.len() >= libc::IFNAMSIZ {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "invalid TAP interface name",
@@ -101,7 +110,11 @@ fn linux_open(tun: &Path, name: &str) -> io::Result<TapInterface> {
         ifr.ifr_ifru.ifru_flags = IFF_TAP | IFF_NO_PI;
         let rc = libc::ioctl(file.as_raw_fd(), TUNSETIFF, &mut ifr);
         if rc < 0 {
-            return Err(io::Error::last_os_error());
+            let error = io::Error::last_os_error();
+            return Err(io::Error::new(
+                error.kind(),
+                format!("cannot attach to {name} via {}: {error}", tun.display()),
+            ));
         }
     }
 
