@@ -1,3 +1,10 @@
+## [1.3.1](https://github.com/dfoshidero/minitcp/compare/v1.3.0...v1.3.1) (2026-08-19)
+
+
+### Bug Fixes
+
+* print minitcp --help after every install ([03a69ca](https://github.com/dfoshidero/minitcp/commit/03a69caa921eaf0906512ee7eae6356b7aecaa5f))
+
 # [1.3.0](https://github.com/dfoshidero/minitcp/compare/v1.2.1...v1.3.0) (2026-08-19)
 
 
