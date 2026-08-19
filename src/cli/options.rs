@@ -1,9 +1,9 @@
-// Everything a run of minitcp is configured by, and where each value came from.
-//
-// Three layers, lowest first: built-in defaults, then minitcp.toml, then the
-// command line. `Partial` is one layer with holes in it, so "not mentioned" is
-// distinguishable from "set to the default", and `apply_partial` lays one over
-// another. That is the whole precedence rule, in one place.
+//! Everything a run of minitcp is configured by, and where each value came from.
+//!
+//! Three layers, lowest first: built-in defaults, then minitcp.toml, then the
+//! command line. `Partial` is one layer with holes in it, so "not mentioned" is
+//! distinguishable from "set to the default", and `apply_partial` lays one over
+//! another. That is the whole precedence rule, in one place.
 
 use std::net::Ipv4Addr;
 use std::path::PathBuf;

@@ -1,13 +1,13 @@
-// The processes the lab runs on your behalf.
-//
-// The lab does not implement the stack or the capture; it starts `minitcp
-// stack` and `tcpdump` as children and shows what they print. That is
-// deliberate — every pane is something you could have typed yourself, and the
-// pane title tells you the command.
-//
-// Stopping them is the subtle part: a capture inside the sidecar has a PID in
-// the container's namespace, meaningless here, so the signal goes back through
-// `docker exec`.
+//! The processes the lab runs on your behalf.
+//!
+//! The lab does not implement the stack or the capture; it starts `minitcp
+//! stack` and `tcpdump` as children and shows what they print. That is
+//! deliberate — every pane is something you could have typed yourself, and the
+//! pane title tells you the command.
+//!
+//! Stopping them is the subtle part: a capture inside the sidecar has a PID in
+//! the container's namespace, meaningless here, so the signal goes back through
+//! `docker exec`.
 
 use std::io::Read;
 use std::os::unix::process::CommandExt;

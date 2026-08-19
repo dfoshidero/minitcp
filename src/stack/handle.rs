@@ -1,13 +1,13 @@
-// The stack itself: one frame in, at most one frame out.
-//
-// `handle_frame` is where minitcp decides what it is looking at and what, if
-// anything, to say back — Ethernet header first, then ARP or IPv4, then ICMP
-// inside that. Everything it needs to parse or build lives in `proto`; this
-// file is the dispatch and the narration, not the wire formats.
-//
-// It is deliberately a pure function of (config, bytes) plus the RNG: no
-// sockets, no files, no clock. That is what makes the whole stack testable by
-// handing it a byte array.
+//! The stack itself: one frame in, at most one frame out.
+//!
+//! `handle_frame` is where minitcp decides what it is looking at and what, if
+//! anything, to say back — Ethernet header first, then ARP or IPv4, then ICMP
+//! inside that. Everything it needs to parse or build lives in `proto`; this
+//! file is the dispatch and the narration, not the wire formats.
+//!
+//! It is deliberately a pure function of (config, bytes) plus the RNG: no
+//! sockets, no files, no clock. That is what makes the whole stack testable by
+//! handing it a byte array.
 
 use std::net::Ipv4Addr;
 

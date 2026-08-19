@@ -1,12 +1,12 @@
-// One command in, one action out.
-//
-// Parsing above, doing below. One `match`, so the full list of what minitcp
-// can do reads in a single screen.
-//
-// One rule about streams: anything the user asked for — help, a `show` — is
-// the result and goes to stdout with exit 0. Usage errors and progress go to
-// stderr. That is what makes `minitcp --help | less` and `minitcp tap > tap.txt`
-// behave the way anyone would expect them to.
+//! One command in, one action out.
+//!
+//! Parsing above, doing below. One `match`, so the full list of what minitcp
+//! can do reads in a single screen.
+//!
+//! One rule about streams: anything the user asked for — help, a `show` — is
+//! the result and goes to stdout with exit 0. Usage errors and progress go to
+//! stderr. That is what makes `minitcp --help | less` and `minitcp tap > tap.txt`
+//! behave the way anyone would expect them to.
 
 use crate::cli::{self, Command, Config};
 use crate::{AppError, log, release, stack, sys, tui};

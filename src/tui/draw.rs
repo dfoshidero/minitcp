@@ -1,8 +1,8 @@
-// Turning the lab's state into a screen.
-//
-// Nothing here mutates: `draw` reads `Lab` and emits widgets. Colour carries
-// meaning — green arrived, cyan sent, red a problem — so direction of traffic
-// is legible without reading the words.
+//! Turning the lab's state into a screen.
+//!
+//! Nothing here mutates: `draw` reads `Lab` and emits widgets. Colour carries
+//! meaning — green arrived, cyan sent, red a problem — so direction of traffic
+//! is legible without reading the words.
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};

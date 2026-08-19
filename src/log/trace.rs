@@ -1,14 +1,14 @@
-// Narrating a frame as it is taken apart.
-//
-// Quiet:  23:12:05  icmp  10.0.0.1 -> 10.0.0.2  echo id=1 seq=1  len=64
-// Verbose first line:
-//   23:12:05  [IN]   ethernet  L2  02:00:… -> 02:00:…  ethertype 0x0800
-//
-// The verbose form is a small tree, because that is what a frame is: an
-// Ethernet header with an IPv4 packet inside it with an ICMP message inside
-// that. Each layer gets a row. IPv4 and ARP keep their own `src -> dst`, while
-// ICMP, TCP and UDP are drawn indented under the IPv4 line they arrived in —
-// they have no addresses of their own, they borrow the packet's.
+//! Narrating a frame as it is taken apart.
+//!
+//! Quiet:  23:12:05  icmp  10.0.0.1 -> 10.0.0.2  echo id=1 seq=1  len=64
+//! Verbose first line:
+//!   23:12:05  [IN]   ethernet  L2  02:00:… -> 02:00:…  ethertype 0x0800
+//!
+//! The verbose form is a small tree, because that is what a frame is: an
+//! Ethernet header with an IPv4 packet inside it with an ICMP message inside
+//! that. Each layer gets a row. IPv4 and ARP keep their own `src -> dst`, while
+//! ICMP, TCP and UDP are drawn indented under the IPv4 line they arrived in —
+//! they have no addresses of their own, they borrow the packet's.
 
 use super::emit_protocol_line;
 

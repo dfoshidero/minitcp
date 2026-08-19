@@ -1,14 +1,14 @@
-// minitcp — a userspace TCP/IP stack you can watch work.
-//
-//   cli        the command line and minitcp.toml
-//   dispatch   which command runs what
-//   proto      wire formats: Ethernet, ARP, IPv4, ICMP
-//   stack      the loop that answers frames
-//   interface  what carries frames: TAP, sidecar, pcap, hex
-//   sys        this machine: processes, the TAP device, Docker
-//   log        protocol tracing and status messages
-//   tui        the terminal UI
-//   release    the update check
+//! minitcp — a userspace TCP/IP stack you can watch work.
+//!
+//!   cli        the command line and minitcp.toml
+//!   dispatch   which command runs what
+//!   proto      wire formats: Ethernet, ARP, IPv4, ICMP
+//!   stack      the loop that answers frames
+//!   interface  what carries frames: TAP, sidecar, pcap, hex
+//!   sys        this machine: processes, the TAP device, Docker
+//!   log        protocol tracing and status messages
+//!   tui        the terminal UI
+//!   release    the update check
 
 mod cli;
 mod dispatch;

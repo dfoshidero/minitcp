@@ -1,10 +1,10 @@
-// Turning one flag and its text into a value.
-//
-// `FLAGS` is the single list of every flag minitcp accepts; walking argv,
-// `--help` and error messages all read it, so a new flag is one entry rather
-// than four edits in four files. `apply_flag` below turns one of them into a
-// `Partial` field, using parsers shared with minitcp.toml so `--addr 10.0.0.3`
-// and `addr = "10.0.0.3"` cannot drift apart.
+//! Turning one flag and its text into a value.
+//!
+//! `FLAGS` is the single list of every flag minitcp accepts; walking argv,
+//! `--help` and error messages all read it, so a new flag is one entry rather
+//! than four edits in four files. `apply_flag` below turns one of them into a
+//! `Partial` field, using parsers shared with minitcp.toml so `--addr 10.0.0.3`
+//! and `addr = "10.0.0.3"` cannot drift apart.
 
 use std::net::Ipv4Addr;
 use std::path::PathBuf;

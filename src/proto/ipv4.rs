@@ -1,4 +1,11 @@
-// src/proto/ipv4.rs
+//! IPv4 (RFC 791) — addressing that survives leaving this cable.
+//!
+//! Layer 3, inside an Ethernet frame with ethertype 0x0800. The header is 20
+//! bytes when nobody has added options, and it carries a checksum over itself
+//! only: the payload is somebody else's problem, usually ICMP or TCP.
+//!
+//! MiniTCP refuses fragments. Reassembly is a whole subsystem, and nothing on
+//! a lab TAP produces them.
 
 use std::net::Ipv4Addr;
 

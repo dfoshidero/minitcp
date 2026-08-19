@@ -1,10 +1,10 @@
-// Wiring the stack to something that carries frames.
-//
-// Which carrier that is — a TAP on this machine, the sidecar over TCP, a pcap
-// file, hex on stdin — is decided here and nowhere else. Once chosen, the loop
-// is identical: read a frame, hand it to `handle_frame`, write back whatever
-// comes out. `open_tap` is the fiddly part, because attaching to a device that
-// was created moments ago can briefly fail for reasons that fix themselves.
+//! Wiring the stack to something that carries frames.
+//!
+//! Which carrier that is — a TAP on this machine, the sidecar over TCP, a pcap
+//! file, hex on stdin — is decided here and nowhere else. Once chosen, the loop
+//! is identical: read a frame, hand it to `handle_frame`, write back whatever
+//! comes out. `open_tap` is the fiddly part, because attaching to a device that
+//! was created moments ago can briefly fail for reasons that fix themselves.
 
 use std::io::{self, BufReader};
 use std::path::Path;

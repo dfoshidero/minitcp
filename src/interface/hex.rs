@@ -1,9 +1,9 @@
-// Ethernet frames typed as hex, one per line.
-//
-// The point is to be able to feed the stack a frame by hand — paste the bytes
-// of an ARP request and watch what comes back — without a TAP, a capture file,
-// or anything else in the way. Blank lines and `#` comments are skipped so a
-// file of examples can explain itself.
+//! Ethernet frames typed as hex, one per line.
+//!
+//! The point is to be able to feed the stack a frame by hand — paste the bytes
+//! of an ARP request and watch what comes back — without a TAP, a capture file,
+//! or anything else in the way. Blank lines and `#` comments are skipped so a
+//! file of examples can explain itself.
 
 use std::io::{self, BufRead};
 

@@ -1,4 +1,4 @@
-// Length-prefixed Ethernet frames over TCP (TAP sidecar <-> host stack).
+//! Length-prefixed Ethernet frames over TCP (TAP sidecar <-> host stack).
 
 use std::io::{self, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};

@@ -1,4 +1,4 @@
-// Flags anywhere. Defaults < minitcp.toml < command line.
+//! Flags anywhere. Defaults < minitcp.toml < command line.
 
 mod args;
 mod command;

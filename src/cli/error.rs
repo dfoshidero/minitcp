@@ -1,7 +1,7 @@
-// What a bad command line produces.
-//
-// A `ParseError` carries what was wrong and the smallest piece of usage text
-// that would have prevented it. Full `--help` is for people who asked for it.
+//! What a bad command line produces.
+//!
+//! A `ParseError` carries what was wrong and the smallest piece of usage text
+//! that would have prevented it. Full `--help` is for people who asked for it.
 
 use super::usage::{TRY_HELP, flag_usage};
 

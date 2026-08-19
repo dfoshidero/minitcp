@@ -1,9 +1,9 @@
-// The TAP as a source and sink of Ethernet frames.
-//
-// Once `sys::tapdev` has made the interface exist, this is the other end of the
-// cable: open /dev/net/tun, name the interface we want to attach to, and from
-// then on every read is one whole Ethernet frame and every write puts one on
-// the wire. Creating and removing the device is deliberately not here.
+//! The TAP as a source and sink of Ethernet frames.
+//!
+//! Once `sys::tapdev` has made the interface exist, this is the other end of the
+//! cable: open /dev/net/tun, name the interface we want to attach to, and from
+//! then on every read is one whole Ethernet frame and every write puts one on
+//! the wire. Creating and removing the device is deliberately not here.
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};

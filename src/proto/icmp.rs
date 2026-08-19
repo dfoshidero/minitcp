@@ -1,4 +1,11 @@
-// src/proto/icmp.rs
+//! ICMP (RFC 792) — the layer `ping` speaks.
+//!
+//! Sits inside IPv4 as protocol 1. An echo request (type 8) and the reply
+//! (type 0) share one shape: type, code, checksum, id, sequence, then whatever
+//! bytes the sender chose, which the replier must send straight back.
+//!
+//! Unlike TCP and UDP, the checksum here covers the whole message rather than
+//! a header and a pseudo-header — there is no address to protect.
 
 use super::checksum::internet_checksum;
 

@@ -1,6 +1,6 @@
-// Classic libpcap file: a global header, then timestamped Ethernet frames.
-// Same format tcpdump/Wireshark write. No extra crate; we only speak little-endian
-// magic 0xa1b2c3d4 and link type 1 (Ethernet). See docs/GLOSSARY.md ("pcap").
+//! Classic libpcap file: a global header, then timestamped Ethernet frames.
+//! Same format tcpdump/Wireshark write. No extra crate; we only speak little-endian
+//! magic 0xa1b2c3d4 and link type 1 (Ethernet). See docs/GLOSSARY.md ("pcap").
 
 use std::fs::File;
 use std::io::{self, Read, Write};

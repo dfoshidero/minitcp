@@ -1,8 +1,8 @@
-// Running other programs.
-//
-// minitcp shells out to `ip`, `sudo`, `docker` and `tcpdump`. Every such call
-// goes through here, so the awkward parts are solved once: no child hangs
-// forever, steals the terminal, floods us, or speaks an unexpected language.
+//! Running other programs.
+//!
+//! minitcp shells out to `ip`, `sudo`, `docker` and `tcpdump`. Every such call
+//! goes through here, so the awkward parts are solved once: no child hangs
+//! forever, steals the terminal, floods us, or speaks an unexpected language.
 
 use std::io::{self, Read};
 use std::os::unix::process::CommandExt;

@@ -1,8 +1,8 @@
-// How frames get in and out of the stack.
-//
-// Everything under here carries Ethernet frames: a real TAP device, a TCP
-// connection to the sidecar, a pcap file, hex on stdin. The stack never learns
-// which one it got — it asks for a frame and hands back a reply.
+//! How frames get in and out of the stack.
+//!
+//! Everything under here carries Ethernet frames: a real TAP device, a TCP
+//! connection to the sidecar, a pcap file, hex on stdin. The stack never learns
+//! which one it got — it asks for a frame and hands back a reply.
 
 pub mod capture;
 pub mod fwd;

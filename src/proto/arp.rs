@@ -1,4 +1,11 @@
-// src/proto/arp.rs
+//! ARP (RFC 826) — "who has this IPv4 address? tell me your MAC".
+//!
+//! Layer 2, carried directly in an Ethernet frame with ethertype 0x0806. It is
+//! the only reason a stack can send an IPv4 packet at all: the wire needs a
+//! destination MAC, and only ARP turns an IPv4 address into one.
+//!
+//! An ARP message is 28 bytes, and a reply is the request with the roles
+//! swapped — which is why `reply_for` below reads mostly as a copy.
 
 use std::net::Ipv4Addr;
 
