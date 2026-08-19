@@ -68,8 +68,7 @@ pub fn tap_down(cfg: &Config) -> io::Result<()> {
                 "Docker is unavailable ({detail}); removing only the local Linux TAP"
             ));
         }
-        process::run_checked(
-            "sudo",
+        process::run_sudo(
             &["ip", "link", "delete", &cfg.iface],
             AllowedFailure::DoesNotExist,
         )?;
@@ -252,26 +251,15 @@ fn dump_sidecar_logs() {
     }
 }
 
+/// Bring up a TAP on this machine, with no container in the picture.
+///
+/// The actual `ip` calls live in `interface::tap::ensure_iface`, which is the
+/// single implementation shared with the sidecar and the terminal UI.
 fn local_linux_up(cfg: &Config) -> io::Result<()> {
-    let user = std::env::var("USER").unwrap_or_else(|_| "netstack".into());
-    process::run_checked(
-        "sudo",
-        &[
-            "ip", "tuntap", "add", "dev", &cfg.iface, "mode", "tap", "user", &user,
-        ],
-        AllowedFailure::AlreadyExists,
-    )?;
-    let cidr = format!("{}/24", cfg.linux_addr);
-    process::run_checked(
-        "sudo",
-        &["ip", "addr", "add", &cidr, "dev", &cfg.iface],
-        AllowedFailure::AlreadyExists,
-    )?;
-    process::run_checked(
-        "sudo",
-        &["ip", "link", "set", "dev", &cfg.iface, "up"],
-        AllowedFailure::None,
-    )?;
-    crate::log::status::ok(format!("local TAP {} up ({})", cfg.iface, cidr));
+    crate::interface::tap::ensure_iface(&cfg.iface, cfg.linux_addr)?;
+    crate::log::status::ok(format!(
+        "local TAP {} up ({}/24)",
+        cfg.iface, cfg.linux_addr
+    ));
     Ok(())
 }

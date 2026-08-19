@@ -465,36 +465,11 @@ struct Lab {
     arp_out: u32,
 }
 
-fn setup_command(tx: &Sender<Msg>, program: &str, args: &[&str]) -> bool {
-    let _ = tx.send(Msg::Action(format!("$ {program} {}", args.join(" "))));
-    match crate::process::output_timeout(program, args, SHORT_COMMAND_TIMEOUT) {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            for line in stdout.lines().chain(stderr.lines()) {
-                let _ = tx.send(Msg::Action(line.to_string()));
-            }
-            if output.status.success() {
-                true
-            } else {
-                let status = output.status.code().map_or_else(
-                    || "terminated by signal".to_string(),
-                    |code| format!("exited with status {code}"),
-                );
-                let _ = tx.send(Msg::Action(format!(
-                    "minitcp: error: `{program} {}` {status}",
-                    args.join(" ")
-                )));
-                false
-            }
-        }
-        Err(e) => {
-            let _ = tx.send(Msg::Action(format!("minitcp: error: {e}")));
-            false
-        }
-    }
-}
-
+/// Make sure the local TAP exists before the stack tries to attach to it.
+///
+/// The `ip` calls themselves live in `interface::tap::ensure_iface` — the one
+/// implementation shared with `minitcp tap up` and the sidecar. This wrapper
+/// only reports what happened into the External Tools pane.
 fn ensure_tap(cfg: &Config, tx: &Sender<Msg>) {
     if !cfg.tun.exists() {
         let _ = tx.send(Msg::Action(format!(
@@ -504,37 +479,18 @@ fn ensure_tap(cfg: &Config, tx: &Sender<Msg>) {
         return;
     }
 
-    let sys = format!("/sys/class/net/{}", cfg.iface);
-    if !Path::new(&sys).exists() {
-        let user = crate::process::output_timeout("id", &["-un"], SHORT_COMMAND_TIMEOUT)
-            .ok()
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "root".into());
-        if !setup_command(
-            tx,
-            "sudo",
-            &[
-                "ip", "tuntap", "add", "dev", &cfg.iface, "mode", "tap", "user", &user,
-            ],
-        ) {
-            return;
+    let _ = tx.send(Msg::Action(format!(
+        "$ bringing up {} with {}/24 on the Linux side",
+        cfg.iface, cfg.linux_addr
+    )));
+    match crate::interface::tap::ensure_iface(&cfg.iface, cfg.linux_addr) {
+        Ok(()) => {
+            let _ = tx.send(Msg::Action(format!("{} is up", cfg.iface)));
+        }
+        Err(error) => {
+            let _ = tx.send(Msg::Action(format!("minitcp: error: {error}")));
         }
     }
-
-    let cidr = format!("{}/24", cfg.linux_addr);
-    let has_addr = crate::process::output_timeout(
-        "ip",
-        &["-4", "addr", "show", "dev", &cfg.iface],
-        SHORT_COMMAND_TIMEOUT,
-    )
-    .ok()
-    .map(|o| String::from_utf8_lossy(&o.stdout).contains(&cidr))
-    .unwrap_or(false);
-    if !has_addr && !setup_command(tx, "sudo", &["ip", "addr", "add", &cidr, "dev", &cfg.iface]) {
-        return;
-    }
-    let _ = setup_command(tx, "sudo", &["ip", "link", "set", "dev", &cfg.iface, "up"]);
 }
 
 fn pump_reader<R: std::io::Read + Send + 'static>(
@@ -1027,7 +983,7 @@ impl Lab {
                             &["exec", CONTAINER, "ip", "neigh", "flush", "dev", &iface],
                         );
                     } else {
-                        run_short(&tx, "sudo", &["ip", "neigh", "flush", "dev", &iface]);
+                        run_short(&tx, "sudo", &["-n", "ip", "neigh", "flush", "dev", &iface]);
                     }
                 });
             }
