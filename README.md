@@ -4,13 +4,30 @@ A small userspace TCP/IP stack in Rust. Linux keeps its stack on one side of a v
 
 Linux owns `10.0.0.1` on TAP interface `tap0`. MiniTCP pretends to be another machine at `10.0.0.2` with MAC `02:00:00:00:00:02`.
 
-Work inside the Dev Container. It has Rust, `/dev/net/tun`, and the privileges needed to create network interfaces.
+Licensed under [MIT](LICENSE). Pull requests: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Terms used in the code are defined in [GLOSSARY.md](GLOSSARY.md).
 
-The Dev Container installs the `minitcp` command automatically. Run it to open the terminal lab:
+## Run with Docker
+
+Install Docker (Docker Engine on Linux, or Docker Desktop on macOS/Windows). Then:
 
 ```bash
+docker run --rm -it \
+  --cap-add=NET_ADMIN \
+  --cap-add=NET_RAW \
+  --device=/dev/net/tun \
+  ghcr.io/dfoshidero/minitcp
+```
+
+That pulls the image on first use and opens the terminal lab. Pass the same flags the binary already has, for example `stack -q` at the end of the command.
+
+TAP is a Linux kernel device. On macOS or Windows, Docker Desktop runs the lab inside a Linux VM; you do not install a native binary.
+
+On Linux with Rust, `ip`, `ping`, `tcpdump`, `/dev/net/tun`, and permission to create TAP interfaces, you can instead:
+
+```bash
+cargo install --git https://github.com/dfoshidero/minitcp
 minitcp
 ```
 
@@ -39,7 +56,7 @@ ping 10.0.0.2
         tap0
 ```
 
-## Open the environment
+## Open the Dev Container
 
 You need Docker running (Docker Engine on Linux, or Docker Desktop with WSL2). Open this folder in Cursor or VS Code with the Dev Containers extension.
 
@@ -173,31 +190,6 @@ Parser tests (no TAP required):
 cargo test
 ```
 
-## Install outside the Dev Container
-
-MiniTCP requires Linux because TAP is a Linux kernel device. On macOS or Windows, use a Linux Docker container rather than installing a native binary.
-
-On Linux with Rust installed:
-
-```bash
-cargo install --git <repository-url>
-minitcp
-```
-
-The host also needs `/dev/net/tun`, `ip`, `ping`, `tcpdump`, and permission to create network interfaces.
-
-For a packaged container image, run it with the network capabilities and TAP device exposed:
-
-```bash
-docker run --rm -it \
-  --cap-add=NET_ADMIN \
-  --cap-add=NET_RAW \
-  --device=/dev/net/tun \
-  <minitcp-image>
-```
-
-A published image and prebuilt GitHub Release binaries can be added later. The current supported download/install paths are the Dev Container and `cargo install` on Linux.
-
 ## What you should see
 
 Verbose is the default: it peels Ethernet / IPv4 / ICMP. Press `v`, or run `minitcp stack -q`, for one line per exchange. TCP and UDP are not decoded yet.
@@ -244,6 +236,7 @@ IPv4 notes that are easy to miss:
 ## Layout
 
 - `GLOSSARY.md` — short definitions of terms the code uses.
+- `Dockerfile` — published lab image (`ghcr.io/dfoshidero/minitcp`). The Dev Container image is `.devcontainer/Dockerfile`.
 - `setup-tap.sh` — manually create and bring up `tap0`; the lab does this automatically.
 - `src/main.rs` — command dispatcher: terminal lab by default, raw stack with `stack`.
 - `src/stack.rs` — TAP loop: read a frame, dispatch to a protocol, write a reply.
