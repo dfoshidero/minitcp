@@ -104,7 +104,8 @@ pub fn usage_topic(topic: HelpTopic) -> String {
 }
 
 pub fn usage() -> String {
-    let color = std::io::stderr().is_terminal();
+    // Help goes to stdout, so that is the stream to ask about colour.
+    let color = std::io::stdout().is_terminal();
     let title = "minitcp — userspace TCP/IP lab";
     let title = if color {
         title.bold().cyan().to_string()
