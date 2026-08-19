@@ -14,7 +14,7 @@ Releases are cut from [conventional commit](https://www.conventionalcommits.org/
 | `ci:`, `refactor:`, `chore:`, `test:` | run | no bump from these; the release job still runs so pending `feat`/`fix` can publish |
 | `docs:` | no-op success | skipped |
 
-PRs build `linux/amd64` only. Pushes to `main` also build `linux/arm64` on a native ARM runner, tagged `ghcr.io/<repo>:sha-<gitsha>-amd64` and `-arm64`. A GitHub Release retags those two images as `:<version>` and `:latest` (`docker buildx imagetools create`); it does not compile the image again. Host CLI binaries (macOS and Linux) are built natively and uploaded to that Release, along with `scripts/install.sh`.
+PRs build `linux/amd64` only. Pushes to `main` also build `linux/arm64` on a native ARM runner, tagged `ghcr.io/<repo>:sha-<gitsha>-amd64` and `-arm64`. A GitHub Release retags those two images as `:<version>` and `:latest` (`docker buildx imagetools create`); it does not compile the image again. Host CLI binaries (Apple Silicon macOS and Linux) are built natively and uploaded to that Release, along with `scripts/install.sh`.
 
 Release notes go on GitHub Releases (`feat` / `fix` / breaking only). After a release, CI opens a `docs:` PR that only updates [CHANGELOG.md](CHANGELOG.md) and marks the required checks green (Actions cannot start a second workflow with `GITHUB_TOKEN`). Merge that PR to keep the file in sync. Squash-merge feature PRs if you want `(#PR)` in the entry.
 
