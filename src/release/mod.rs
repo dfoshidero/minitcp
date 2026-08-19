@@ -8,7 +8,11 @@ const CACHE_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 /// How long to wait after a check that never got an answer — much shorter,
 /// since the usual cause is a laptop that was briefly offline.
 const RETRY_AFTER: Duration = Duration::from_secs(60 * 60);
-const REPO: &str = "dfoshidero/minitcp";
+pub const REPO: &str = "dfoshidero/minitcp";
+
+/// The one-liner the README, `--help` and the update nag all point at.
+pub const INSTALL_URL: &str =
+    "https://github.com/dfoshidero/minitcp/releases/latest/download/install.sh";
 
 pub fn nag_if_outdated() {
     if std::env::var_os("MINITCP_NO_UPDATE_CHECK").is_some() {
@@ -34,9 +38,7 @@ pub fn nag_if_outdated() {
         crate::log::status::info(format!(
             "minitcp {latest} is available (you have {current})"
         ));
-        crate::log::status::info(format!(
-            "Update: curl -fsSL https://github.com/{REPO}/releases/latest/download/install.sh | sh"
-        ));
+        crate::log::status::info(format!("Update: curl -fsSL {INSTALL_URL} | sh"));
     }
 }
 
@@ -158,6 +160,11 @@ fn parse_semver(s: &str) -> (u64, u64, u64) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_install_url_points_at_this_repo() {
+        assert!(INSTALL_URL.contains(REPO), "{INSTALL_URL}");
+    }
+
     use super::*;
 
     #[test]

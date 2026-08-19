@@ -9,7 +9,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::cli::Config;
-use crate::interface::fwd::DEFAULT_FWD;
+use crate::interface::fwd::DEFAULT_PORT;
 use crate::sys::process::{self, AllowedFailure};
 
 pub(crate) const CONTAINER: &str = "minitcp-tap";
@@ -114,7 +114,7 @@ pub fn down() -> io::Result<bool> {
 /// `docker run` the sidecar, retrying a few times — a first pull on a slow
 /// connection can outlast one attempt, leaving the container name taken.
 fn start_container(cfg: &Config, image: &str, pull: &str) -> io::Result<()> {
-    let port = DEFAULT_FWD.split(':').next_back().unwrap_or("7946");
+    let port = DEFAULT_PORT.to_string();
     let args = vec![
         "run".to_string(),
         "-d".into(),

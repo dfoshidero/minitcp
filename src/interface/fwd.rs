@@ -10,6 +10,9 @@ use std::time::{Duration, Instant};
 use super::tap::TapInterface;
 use super::{FrameSink, FrameSource};
 
+/// The port the bridge speaks on. Unassigned by IANA, and memorable.
+pub const DEFAULT_PORT: u16 = 7946;
+
 /// Where the host stack looks for the bridge.
 pub const DEFAULT_FWD: &str = "127.0.0.1:7946";
 
@@ -318,6 +321,13 @@ fn poll_tap_or_stop(tap_fd: i32, wake_fd: i32) -> io::Result<Wake> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_default_addresses_use_the_default_port() {
+        let suffix = format!(":{DEFAULT_PORT}");
+        assert!(DEFAULT_FWD.ends_with(&suffix), "{DEFAULT_FWD}");
+        assert!(DEFAULT_LISTEN.ends_with(&suffix), "{DEFAULT_LISTEN}");
+    }
+
     use super::*;
     use std::fs::File;
     use std::os::fd::OwnedFd;

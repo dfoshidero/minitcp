@@ -161,9 +161,7 @@ Exit status: 0 success, 1 runtime failure, 2 command-line usage error.
 	quiet = true
 	drop = [\"icmp\"]
 ",
-        install = cmd(
-            "curl -fsSL https://github.com/dfoshidero/minitcp/releases/latest/download/install.sh | sh"
-        ),
+        install = cmd(&format!("curl -fsSL {} | sh", crate::release::INSTALL_URL)),
         run = cmd("minitcp [run]"),
         stack = cmd("minitcp stack"),
         replay = cmd("minitcp replay FILE"),
