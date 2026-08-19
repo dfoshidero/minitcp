@@ -34,39 +34,42 @@ pub(super) fn apply_flag(
         "--write" => partial.write = Some(PathBuf::from(need()?)),
         "--config" => partial.config = Some(PathBuf::from(need()?)),
         "--drop" => partial.drop = Some(parse_drop_list(need()?)?),
-        "--drop-pct" => {
-            let n = parse_count(need()?)?;
-            if n > 100 {
-                return Err(ParseError::with_usage(
-                    "drop-pct must be 0-100",
-                    flag_usage("--drop-pct"),
-                ));
-            }
-            partial.drop_pct = Some(n as u8);
-        }
-        "--ttl" => {
-            let n = parse_count(need()?)?;
-            if n > 255 {
-                return Err(ParseError::with_usage(
-                    "ttl must be 0-255",
-                    flag_usage("--ttl"),
-                ));
-            }
-            partial.ttl = Some(n as u8);
-        }
-        "--id" => {
-            let n = parse_count(need()?)?;
-            if n > u16::MAX as u64 {
-                return Err(ParseError::with_usage(
-                    "id must be 0-65535",
-                    flag_usage("--id"),
-                ));
-            }
-            partial.icmp_id = Some(n as u16);
-        }
+        "--drop-pct" => set_drop_pct(partial, parse_count(need()?)?)?,
+        "--ttl" => set_ttl(partial, parse_count(need()?)?)?,
+        "--id" => set_icmp_id(partial, parse_count(need()?)?)?,
         "-c" | "--count" => partial.count = Some(parse_count(need()?)?),
         other => return Err(ParseError::msg(format!("unknown flag '{other}'"))),
     }
+    Ok(())
+}
+
+/// Reject a number outside the range the protocol field can hold, naming the
+/// flag so the message reads the same whether it came from argv or the file.
+fn in_range(n: u64, max: u64, flag: &str) -> Result<u64, ParseError> {
+    if n > max {
+        return Err(ParseError::with_usage(
+            format!("{} must be 0-{max}", flag.trim_start_matches('-')),
+            flag_usage(flag),
+        ));
+    }
+    Ok(n)
+}
+
+// The bounded numbers live here rather than at each caller so `--ttl 300` and
+// `ttl = 300` cannot end up disagreeing about what is allowed.
+
+pub(super) fn set_drop_pct(partial: &mut Partial, n: u64) -> Result<(), ParseError> {
+    partial.drop_pct = Some(in_range(n, 100, "--drop-pct")? as u8);
+    Ok(())
+}
+
+pub(super) fn set_ttl(partial: &mut Partial, n: u64) -> Result<(), ParseError> {
+    partial.ttl = Some(in_range(n, 255, "--ttl")? as u8);
+    Ok(())
+}
+
+pub(super) fn set_icmp_id(partial: &mut Partial, n: u64) -> Result<(), ParseError> {
+    partial.icmp_id = Some(in_range(n, u16::MAX as u64, "--id")? as u16);
     Ok(())
 }
 

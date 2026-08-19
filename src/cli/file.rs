@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use super::error::ParseError;
-use super::flags::{parse_drop_list, parse_ipv4, parse_mac};
+use super::flags::{parse_drop_list, parse_ipv4, parse_mac, set_drop_pct, set_icmp_id, set_ttl};
 use super::options::{DropKind, Partial};
 use super::usage::{USAGE_CONFIG, flag_usage};
 
@@ -43,36 +43,9 @@ pub(crate) fn apply(partial: &mut Partial, table: &::toml::Table) -> Result<(), 
             "quiet" => partial.quiet = Some(toml_bool(value, key)?),
             "count" => partial.count = Some(toml_u64(value, key)?),
             "drop" => partial.drop = Some(toml_drop(value)?),
-            "drop-pct" | "drop_pct" => {
-                let n = toml_u64(value, key)?;
-                if n > 100 {
-                    return Err(ParseError::with_usage(
-                        "drop-pct must be 0-100",
-                        flag_usage("--drop-pct"),
-                    ));
-                }
-                partial.drop_pct = Some(n as u8);
-            }
-            "ttl" => {
-                let n = toml_u64(value, key)?;
-                if n > 255 {
-                    return Err(ParseError::with_usage(
-                        "ttl must be 0-255",
-                        flag_usage("--ttl"),
-                    ));
-                }
-                partial.ttl = Some(n as u8);
-            }
-            "id" => {
-                let n = toml_u64(value, key)?;
-                if n > u16::MAX as u64 {
-                    return Err(ParseError::with_usage(
-                        "id must be 0-65535",
-                        flag_usage("--id"),
-                    ));
-                }
-                partial.icmp_id = Some(n as u16);
-            }
+            "drop-pct" | "drop_pct" => set_drop_pct(partial, toml_u64(value, key)?)?,
+            "ttl" => set_ttl(partial, toml_u64(value, key)?)?,
+            "id" => set_icmp_id(partial, toml_u64(value, key)?)?,
             other => {
                 return Err(ParseError::with_usage(
                     format!("unknown config key: {other}"),
