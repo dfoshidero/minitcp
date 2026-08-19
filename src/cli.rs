@@ -12,6 +12,113 @@ pub const DEFAULT_TUN: &str = "/dev/net/tun";
 pub const DEFAULT_TTL: u8 = 64;
 pub const DEFAULT_CONFIG: &str = "minitcp.toml";
 
+const TRY_HELP: &str = "Try 'minitcp --help' for the full list.";
+
+const USAGE_COMMANDS: &str = "\
+usage:
+  minitcp [run]           terminal UI (default) | run is the same
+  minitcp stack           TAP loop only (no UI)
+  minitcp replay FILE     play a pcap instead of TAP
+  minitcp pcap-info FILE  list frames in a pcap (no stack)";
+
+const USAGE_REPLAY: &str = "\
+usage: minitcp replay FILE
+  play a pcap instead of TAP
+
+example: minitcp replay out.pcap -q";
+
+const USAGE_PCAP_INFO: &str = "\
+usage: minitcp pcap-info FILE
+  list frames in a pcap (no stack)
+
+example: minitcp pcap-info out.pcap";
+
+const USAGE_CONFIG: &str = "\
+usage: --config FILE           TOML instead of ./minitcp.toml
+  --config must point at an existing file.
+  Omit it to use ./minitcp.toml if that file is present.";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseError {
+    pub message: String,
+    pub usage: Option<String>,
+}
+
+impl ParseError {
+    fn msg(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            usage: Some(TRY_HELP.into()),
+        }
+    }
+
+    fn with_usage(message: impl Into<String>, usage: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            usage: Some(usage.into()),
+        }
+    }
+
+    pub fn report(&self) -> String {
+        match &self.usage {
+            Some(usage) => format!("error: {}\n\n{usage}\n", self.message),
+            None => format!("error: {}\n\n{TRY_HELP}\n", self.message),
+        }
+    }
+}
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.report())
+    }
+}
+
+impl From<String> for ParseError {
+    fn from(message: String) -> Self {
+        Self::msg(message)
+    }
+}
+
+impl From<&str> for ParseError {
+    fn from(message: &str) -> Self {
+        Self::msg(message)
+    }
+}
+
+fn flag_usage(flag: &str) -> &'static str {
+    match flag {
+        "--iface" => "usage: --iface NAME            which TAP (default: tap0)",
+        "--addr" => "usage: --addr IP               MiniTCP's IPv4 (default: 10.0.0.2)",
+        "--mac" => "usage: --mac MAC               MiniTCP's MAC (default: 02:00:00:00:00:02)",
+        "--linux-addr" => {
+            "usage: --linux-addr IP         Linux's IPv4 on that TAP (default: same street, .1)"
+        }
+        "--tun" => "usage: --tun PATH              tun device (default: /dev/net/tun)",
+        "--write" => "usage: --write FILE            also save frames to a pcap",
+        "--config" => USAGE_CONFIG,
+        "--drop" => "usage: --drop arp|icmp|ip      ignore that kind of frame (comma-ok: arp,icmp)",
+        "--drop-pct" => {
+            "usage: --drop-pct N            drop N percent of frames at random (0-100)"
+        }
+        "--ttl" => {
+            "usage: --ttl N                 hop count on MiniTCP's IPv4 replies (default: 64)"
+        }
+        "--id" => {
+            "usage: --id N                  ICMP echo id on replies (default: copy from request)"
+        }
+        "-c" | "--count" => {
+            "usage: -c, --count N           stop after N frames (stack/replay)"
+        }
+        "replay" => USAGE_REPLAY,
+        "pcap-info" => USAGE_PCAP_INFO,
+        _ => TRY_HELP,
+    }
+}
+
+fn missing_value(flag: &str) -> ParseError {
+    ParseError::with_usage(format!("{flag} needs a value"), flag_usage(flag))
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Command {
     Run,
@@ -29,12 +136,15 @@ pub enum DropKind {
 }
 
 impl DropKind {
-    pub fn parse(name: &str) -> Result<Self, String> {
+    pub fn parse(name: &str) -> Result<Self, ParseError> {
         match name.trim().to_ascii_lowercase().as_str() {
             "arp" => Ok(Self::Arp),
             "icmp" => Ok(Self::Icmp),
             "ip" => Ok(Self::Ip),
-            other => Err(format!("unknown drop kind: {other} (want arp, icmp, or ip)")),
+            other => Err(ParseError::with_usage(
+                format!("unknown drop kind '{other}' (want arp, icmp, or ip)"),
+                flag_usage("--drop"),
+            )),
         }
     }
 }
@@ -247,12 +357,12 @@ pub fn parse_mac(s: &str) -> Result<MacAddress, String> {
     Ok(MacAddress(bytes))
 }
 
-fn parse_ipv4(s: &str) -> Result<Ipv4Addr, String> {
+fn parse_ipv4(s: &str) -> Result<Ipv4Addr, ParseError> {
     s.parse()
-        .map_err(|_| format!("invalid IPv4 address: {s}"))
+        .map_err(|_| ParseError::msg(format!("invalid IPv4 address: {s}")))
 }
 
-fn parse_drop_list(s: &str) -> Result<Vec<DropKind>, String> {
+fn parse_drop_list(s: &str) -> Result<Vec<DropKind>, ParseError> {
     let mut out = Vec::new();
     for part in s.split(',') {
         if part.trim().is_empty() {
@@ -264,16 +374,16 @@ fn parse_drop_list(s: &str) -> Result<Vec<DropKind>, String> {
         }
     }
     if out.is_empty() {
-        return Err("flag --drop needs arp, icmp, or ip".into());
+        return Err(missing_value("--drop"));
     }
     Ok(out)
 }
 
-fn take_value<'a>(args: &'a [String], i: &mut usize, flag: &str) -> Result<&'a str, String> {
+fn take_value<'a>(args: &'a [String], i: &mut usize, flag: &str) -> Result<&'a str, ParseError> {
     *i += 1;
     args.get(*i)
         .map(String::as_str)
-        .ok_or_else(|| format!("flag {flag} needs a value"))
+        .ok_or_else(|| missing_value(flag))
 }
 
 fn split_eq(arg: &str) -> Option<(&str, &str)> {
@@ -325,24 +435,33 @@ fn apply_partial(base: &mut Config, over: &Partial) {
     }
 }
 
-fn toml_string(v: &toml::Value, key: &str) -> Result<String, String> {
+fn toml_string(v: &toml::Value, key: &str) -> Result<String, ParseError> {
     v.as_str()
         .map(str::to_string)
-        .ok_or_else(|| format!("config key {key} must be a string"))
+        .ok_or_else(|| ParseError::with_usage(
+            format!("config key {key} must be a string"),
+            USAGE_CONFIG,
+        ))
 }
 
-fn toml_bool(v: &toml::Value, key: &str) -> Result<bool, String> {
+fn toml_bool(v: &toml::Value, key: &str) -> Result<bool, ParseError> {
     v.as_bool()
-        .ok_or_else(|| format!("config key {key} must be a boolean"))
+        .ok_or_else(|| ParseError::with_usage(
+            format!("config key {key} must be a boolean"),
+            USAGE_CONFIG,
+        ))
 }
 
-fn toml_u64(v: &toml::Value, key: &str) -> Result<u64, String> {
+fn toml_u64(v: &toml::Value, key: &str) -> Result<u64, ParseError> {
     v.as_integer()
         .and_then(|n| u64::try_from(n).ok())
-        .ok_or_else(|| format!("config key {key} must be a non-negative integer"))
+        .ok_or_else(|| ParseError::with_usage(
+            format!("config key {key} must be a non-negative integer"),
+            USAGE_CONFIG,
+        ))
 }
 
-fn apply_toml(partial: &mut Partial, table: &toml::Table) -> Result<(), String> {
+fn apply_toml(partial: &mut Partial, table: &toml::Table) -> Result<(), ParseError> {
     for (key, value) in table {
         match key.as_str() {
             "iface" => partial.iface = Some(toml_string(value, key)?),
@@ -363,51 +482,71 @@ fn apply_toml(partial: &mut Partial, table: &toml::Table) -> Result<(), String> 
             "drop-pct" | "drop_pct" => {
                 let n = toml_u64(value, key)?;
                 if n > 100 {
-                    return Err("drop-pct must be 0-100".into());
+                    return Err(ParseError::with_usage(
+                        "drop-pct must be 0-100",
+                        flag_usage("--drop-pct"),
+                    ));
                 }
                 partial.drop_pct = Some(n as u8);
             }
             "ttl" => {
                 let n = toml_u64(value, key)?;
                 if n > 255 {
-                    return Err("ttl must be 0-255".into());
+                    return Err(ParseError::with_usage(
+                        "ttl must be 0-255",
+                        flag_usage("--ttl"),
+                    ));
                 }
                 partial.ttl = Some(n as u8);
             }
             "id" => {
                 let n = toml_u64(value, key)?;
                 if n > u16::MAX as u64 {
-                    return Err("id must be 0-65535".into());
+                    return Err(ParseError::with_usage(
+                        "id must be 0-65535",
+                        flag_usage("--id"),
+                    ));
                 }
                 partial.icmp_id = Some(n as u16);
             }
-            other => return Err(format!("unknown config key: {other}")),
+            other => {
+                return Err(ParseError::with_usage(
+                    format!("unknown config key: {other}"),
+                    USAGE_CONFIG,
+                ))
+            }
         }
     }
     Ok(())
 }
 
-fn toml_drop(value: &toml::Value) -> Result<Vec<DropKind>, String> {
+fn toml_drop(value: &toml::Value) -> Result<Vec<DropKind>, ParseError> {
     match value {
         toml::Value::String(s) => parse_drop_list(s),
         toml::Value::Array(items) => {
             let mut joined = Vec::new();
             for item in items {
-                let name = item
-                    .as_str()
-                    .ok_or_else(|| "drop entries must be strings".to_string())?;
+                let name = item.as_str().ok_or_else(|| {
+                    ParseError::with_usage("drop entries must be strings", flag_usage("--drop"))
+                })?;
                 joined.push(DropKind::parse(name)?);
             }
             if joined.is_empty() {
-                return Err("drop must list arp, icmp, or ip".into());
+                return Err(ParseError::with_usage(
+                    "drop must list arp, icmp, or ip",
+                    flag_usage("--drop"),
+                ));
             }
             Ok(joined)
         }
-        _ => Err("drop must be a string or array of strings".into()),
+        _ => Err(ParseError::with_usage(
+            "drop must be a string or array of strings",
+            flag_usage("--drop"),
+        )),
     }
 }
 
-fn parse_cli(args: &[String]) -> Result<Partial, String> {
+fn parse_cli(args: &[String]) -> Result<Partial, ParseError> {
     let mut partial = Partial::default();
     let mut i = 0;
     while i < args.len() {
@@ -437,7 +576,9 @@ fn parse_cli(args: &[String]) -> Result<Partial, String> {
                     let v = take_value(args, &mut i, arg)?;
                     apply_flag(&mut partial, arg, Some(v))?;
                 }
-                other => return Err(format!("unknown flag: {other}")),
+                other => {
+                    return Err(ParseError::msg(format!("unknown flag '{other}'")));
+                }
             }
             i += 1;
             continue;
@@ -448,43 +589,58 @@ fn parse_cli(args: &[String]) -> Result<Partial, String> {
             "stack" => set_command(&mut partial, Command::Stack)?,
             "replay" => {
                 let file = take_value(args, &mut i, "replay")
-                    .map_err(|_| "replay needs a file".to_string())?;
+                    .map_err(|_| ParseError::with_usage("replay needs a pcap path", USAGE_REPLAY))?;
                 set_command(&mut partial, Command::Replay(PathBuf::from(file)))?;
             }
             "pcap-info" => {
-                let file = take_value(args, &mut i, "pcap-info")
-                    .map_err(|_| "pcap-info needs a file".to_string())?;
+                let file = take_value(args, &mut i, "pcap-info").map_err(|_| {
+                    ParseError::with_usage("pcap-info needs a pcap path", USAGE_PCAP_INFO)
+                })?;
                 set_command(&mut partial, Command::PcapInfo(PathBuf::from(file)))?;
             }
-            other => return Err(format!("unknown command: {other}")),
+            other => {
+                return Err(ParseError::with_usage(
+                    format!("unknown command '{other}'"),
+                    USAGE_COMMANDS,
+                ))
+            }
         }
         i += 1;
     }
     Ok(partial)
 }
 
-fn set_command(partial: &mut Partial, command: Command) -> Result<(), String> {
+fn set_command(partial: &mut Partial, command: Command) -> Result<(), ParseError> {
     match &partial.command {
         None => {
             partial.command = Some(command);
             Ok(())
         }
         Some(Command::Help) => Ok(()),
-        Some(_) => Err("only one command is allowed".into()),
+        Some(_) => Err(ParseError::with_usage(
+            "only one command is allowed",
+            USAGE_COMMANDS,
+        )),
     }
 }
 
-fn apply_flag(partial: &mut Partial, flag: &str, value: Option<&str>) -> Result<(), String> {
-    let need = || value.ok_or_else(|| format!("flag {flag} needs a value"));
+fn apply_flag(partial: &mut Partial, flag: &str, value: Option<&str>) -> Result<(), ParseError> {
+    let need = || value.ok_or_else(|| missing_value(flag));
     match flag {
         "--quiet" => partial.quiet = Some(true),
         "--hex" => partial.hex = Some(true),
         "--no-create-tap" => partial.no_create_tap = Some(true),
         "--once" => partial.count = Some(1),
         "--iface" => partial.iface = Some(need()?.to_string()),
-        "--addr" => partial.addr = Some(parse_ipv4(need()?)?),
-        "--mac" => partial.mac = Some(parse_mac(need()?)?),
-        "--linux-addr" => partial.linux_addr = Some(parse_ipv4(need()?)?),
+        "--addr" => {
+            partial.addr = Some(parse_ipv4(need()?)?)
+        }
+        "--mac" => {
+            partial.mac = Some(parse_mac(need()?).map_err(ParseError::msg)?)
+        }
+        "--linux-addr" => {
+            partial.linux_addr = Some(parse_ipv4(need()?)?)
+        }
         "--tun" => partial.tun = Some(PathBuf::from(need()?)),
         "--write" => partial.write = Some(PathBuf::from(need()?)),
         "--config" => partial.config = Some(PathBuf::from(need()?)),
@@ -492,44 +648,61 @@ fn apply_flag(partial: &mut Partial, flag: &str, value: Option<&str>) -> Result<
         "--drop-pct" => {
             let n = parse_count(need()?)?;
             if n > 100 {
-                return Err("drop-pct must be 0-100".into());
+                return Err(ParseError::with_usage(
+                    "drop-pct must be 0-100",
+                    flag_usage("--drop-pct"),
+                ));
             }
             partial.drop_pct = Some(n as u8);
         }
         "--ttl" => {
             let n = parse_count(need()?)?;
             if n > 255 {
-                return Err("ttl must be 0-255".into());
+                return Err(ParseError::with_usage(
+                    "ttl must be 0-255",
+                    flag_usage("--ttl"),
+                ));
             }
             partial.ttl = Some(n as u8);
         }
         "--id" => {
             let n = parse_count(need()?)?;
             if n > u16::MAX as u64 {
-                return Err("id must be 0-65535".into());
+                return Err(ParseError::with_usage(
+                    "id must be 0-65535",
+                    flag_usage("--id"),
+                ));
             }
             partial.icmp_id = Some(n as u16);
         }
         "-c" | "--count" => partial.count = Some(parse_count(need()?)?),
-        other => return Err(format!("unknown flag: {other}")),
+        other => return Err(ParseError::msg(format!("unknown flag '{other}'"))),
     }
     Ok(())
 }
 
-fn parse_count(s: &str) -> Result<u64, String> {
+fn parse_count(s: &str) -> Result<u64, ParseError> {
     s.parse()
-        .map_err(|_| format!("invalid number: {s}"))
+        .map_err(|_| ParseError::msg(format!("invalid number: {s}")))
 }
 
-fn load_toml_file(path: &Path) -> Result<toml::Table, String> {
-    let text = std::fs::read_to_string(path)
-        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-    text.parse::<toml::Table>()
-        .map_err(|e| format!("invalid TOML in {}: {e}", path.display()))
+fn load_toml_file(path: &Path) -> Result<toml::Table, ParseError> {
+    let text = std::fs::read_to_string(path).map_err(|e| {
+        ParseError::with_usage(
+            format!("config file not found: {} ({e})", path.display()),
+            USAGE_CONFIG,
+        )
+    })?;
+    text.parse::<toml::Table>().map_err(|e| {
+        ParseError::with_usage(
+            format!("invalid TOML in {}: {e}", path.display()),
+            USAGE_CONFIG,
+        )
+    })
 }
 
 /// Parse argv without the program name. `cwd` is where `./minitcp.toml` is sought.
-pub fn parse_from(args: &[String], cwd: &Path) -> Result<Config, String> {
+pub fn parse_from(args: &[String], cwd: &Path) -> Result<Config, ParseError> {
     let cli = parse_cli(args)?;
     if matches!(cli.command, Some(Command::Help)) {
         let mut cfg = Config::defaults();
@@ -540,7 +713,10 @@ pub fn parse_from(args: &[String], cwd: &Path) -> Result<Config, String> {
     let mut file = Partial::default();
     if let Some(path) = &cli.config {
         if !path.is_file() {
-            return Err(format!("cannot read {}", path.display()));
+            return Err(ParseError::with_usage(
+                format!("config file not found: {}", path.display()),
+                USAGE_CONFIG,
+            ));
         }
         apply_toml(&mut file, &load_toml_file(path)?)?;
     } else {
@@ -560,7 +736,7 @@ pub fn parse_from(args: &[String], cwd: &Path) -> Result<Config, String> {
     Ok(cfg)
 }
 
-pub fn parse(args: &[String]) -> Result<Config, String> {
+pub fn parse(args: &[String]) -> Result<Config, ParseError> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     parse_from(args, &cwd)
 }
@@ -584,7 +760,7 @@ mod tests {
     }
 
     fn parse_err(parts: &[&str]) -> String {
-        parse_from(&args(parts), &empty_cwd()).unwrap_err()
+        parse_from(&args(parts), &empty_cwd()).unwrap_err().report()
     }
 
     fn unique_dir() -> PathBuf {
@@ -636,13 +812,17 @@ mod tests {
     #[test]
     fn unknown_flag_errors() {
         let err = parse_err(&["--nope"]);
-        assert!(err.contains("unknown flag"), "{err}");
+        assert!(err.contains("unknown flag '--nope'"), "{err}");
+        assert!(err.contains("Try 'minitcp --help'"), "{err}");
+        assert!(!err.contains("Everything below is optional"), "{err}");
     }
 
     #[test]
     fn replay_needs_a_file() {
         let err = parse_err(&["replay"]);
-        assert_eq!(err, "replay needs a file");
+        assert!(err.contains("replay needs a pcap path"), "{err}");
+        assert!(err.contains("replay FILE"), "{err}");
+        assert!(!err.contains("Everything below is optional"), "{err}");
         let cfg = parse_ok(&["replay", "out.pcap"]);
         assert_eq!(cfg.command, Command::Replay(PathBuf::from("out.pcap")));
     }
@@ -702,7 +882,10 @@ mod tests {
     #[test]
     fn missing_config_path_errors() {
         let err = parse_err(&["--config", "/no/such/minitcp.toml"]);
-        assert!(err.contains("cannot read"), "{err}");
+        assert!(err.contains("config file not found"), "{err}");
+        assert!(err.contains("/no/such/minitcp.toml"), "{err}");
+        assert!(!err.contains("Everything below is optional"), "{err}");
+        assert!(err.contains("--config FILE"), "{err}");
     }
 
     #[test]
@@ -744,8 +927,10 @@ mod tests {
             &args(&["--config", dir.join("lab.toml").to_str().unwrap()]),
             &dir,
         )
-        .unwrap_err();
+        .unwrap_err()
+        .report();
         assert!(err.contains("unknown config key"), "{err}");
+        assert!(!err.contains("Everything below is optional"), "{err}");
         let _ = fs::remove_dir_all(dir);
     }
 

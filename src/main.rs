@@ -12,8 +12,7 @@ fn main() -> std::io::Result<()> {
     let cfg = match cli::parse(&args) {
         Ok(cfg) => cfg,
         Err(err) => {
-            eprintln!("minitcp: {err}\n");
-            eprint!("{}", cli::usage());
+            eprint!("{err}");
             std::process::exit(2);
         }
     };
