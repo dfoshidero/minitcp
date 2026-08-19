@@ -284,13 +284,17 @@ fn display_command(program: &str, args: &[&str]) -> String {
 
 /// Did this failure mean "that already exists", rather than a real problem?
 ///
-/// `ip tuntap add` is the odd one out: a name that is taken comes back as
-/// `ioctl(TUNSETIFF): Device or resource busy`, not EEXIST. The busy check is
-/// tied to TUNSETIFF because a bare "resource busy" elsewhere is real.
+/// Each phrase is one tool's way of saying so. Older iproute2 answers `ip addr
+/// add` with "RTNETLINK answers: File exists"; Ubuntu 24.04's says "Error:
+/// ipv4: Address already assigned". `ip tuntap add` is the odd one out — a
+/// name that is taken comes back as `ioctl(TUNSETIFF): Device or resource
+/// busy`, not EEXIST, and that check is tied to TUNSETIFF because a bare
+/// "resource busy" elsewhere is real.
 fn is_already_exists(detail: &str) -> bool {
     let lower = detail.to_ascii_lowercase();
     lower.contains("file exists")
         || lower.contains("already exists")
+        || lower.contains("already assigned")
         || (lower.contains("tunsetiff") && lower.contains("busy"))
 }
 
@@ -322,6 +326,19 @@ mod tests {
             "ip",
             &["addr", "add"],
             failed("RTNETLINK answers: File exists"),
+            AllowedFailure::AlreadyExists,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn newer_iproute2_wording_is_idempotent_too() {
+        // Ubuntu 24.04 says this instead of "RTNETLINK answers: File exists",
+        // which made a second `minitcp tap up` fail.
+        check_output(
+            "ip",
+            &["addr", "add"],
+            failed("Error: ipv4: Address already assigned."),
             AllowedFailure::AlreadyExists,
         )
         .unwrap();
