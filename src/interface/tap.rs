@@ -1,15 +1,7 @@
 // src/interface/tap.rs
 use std::fs::{File, OpenOptions};
-use std::io::{self , Read , Write};
-use std::os::fd::AsRawFd;
+use std::io::{self, Read, Write};
 use std::path::Path;
-
-// ioctl command: "this open file is the named TAP/TUN device." Opening /dev/net/tun is not enough by itself.
-const TUNSETIFF: libc::c_ulong = 0x4004_54ca;
-// TAP gives whole Ethernet frames (MACs, ARP). TUN would skip that and hand us raw IP — MiniTCP needs the Ethernet layer.
-const IFF_TAP: libc::c_short = 0x0002;
-// The kernel can prepend 4 extra bytes we would have to skip. This flag turns that off.
-const IFF_NO_PI: libc::c_short = 0x1000;
 
 pub struct TapInterface {
     file: File,
@@ -17,42 +9,91 @@ pub struct TapInterface {
 
 impl TapInterface {
     pub fn open_at(tun: &Path, name: &str) -> io::Result<Self> {
-
-        // The kernel copies the name into a fixed C array that includes a trailing NUL, so `>=` is too long.
-        if name.is_empty() || name.len() >= libc::IFNAMSIZ as usize {
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = (tun, name);
             return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "invalid TAP interface name"
+                io::ErrorKind::Unsupported,
+                "TAP is Linux-only; run `minitcp tap up` and use the sidecar",
             ));
         }
 
-        // Character device: a file you read/write frames on. ioctl below attaches it to tap0.
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(tun)?;
-
-        let mut ifr: libc::ifreq = unsafe { std::mem::zeroed() };
-        // Kernel reads the interface name from this C struct, not from the path we opened.
-        for (dst, src) in ifr.ifr_name.iter_mut().zip(name.bytes()) {
-            *dst = src as libc::c_char;
+        #[cfg(target_os = "linux")]
+        {
+            linux_open(tun, name)
         }
+    }
 
-        unsafe {
-            // Two independent yes/no options share one flags field. OR turns both on.
-            ifr.ifr_ifru.ifru_flags = IFF_TAP | IFF_NO_PI;
+    pub fn try_clone(&self) -> io::Result<Self> {
+        Ok(Self {
+            file: self.file.try_clone()?,
+        })
+    }
+}
+
+/// Create the TAP and give Linux an address (sidecar / local Linux).
+pub fn ensure_iface(name: &str, linux_addr: std::net::Ipv4Addr) -> io::Result<()> {
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (name, linux_addr);
+        Ok(())
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let user = std::env::var("USER").unwrap_or_else(|_| "root".into());
+        let _ = std::process::Command::new("ip")
+            .args(["tuntap", "add", "dev", name, "mode", "tap", "user", &user])
+            .status();
+        let _ = std::process::Command::new("sudo")
+            .args([
+                "ip", "tuntap", "add", "dev", name, "mode", "tap", "user", &user,
+            ])
+            .status();
+        let cidr = format!("{linux_addr}/24");
+        let _ = std::process::Command::new("sudo")
+            .args(["ip", "addr", "add", &cidr, "dev", name])
+            .status();
+        let st = std::process::Command::new("sudo")
+            .args(["ip", "link", "set", "dev", name, "up"])
+            .status()?;
+        if !st.success() {
+            return Err(io::Error::other(format!("could not bring {name} up")));
         }
+        Ok(())
+    }
+}
 
-        let rc = unsafe {
-            libc::ioctl(file.as_raw_fd(), TUNSETIFF, &mut ifr)
-        };
+#[cfg(target_os = "linux")]
+fn linux_open(tun: &Path, name: &str) -> io::Result<TapInterface> {
+    use std::os::fd::AsRawFd;
 
+    const TUNSETIFF: libc::c_ulong = 0x4004_54ca;
+    const IFF_TAP: libc::c_short = 0x0002;
+    const IFF_NO_PI: libc::c_short = 0x1000;
+
+    if name.is_empty() || name.len() >= libc::IFNAMSIZ as usize {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid TAP interface name",
+        ));
+    }
+
+    let file = OpenOptions::new().read(true).write(true).open(tun)?;
+
+    let mut ifr: libc::ifreq = unsafe { std::mem::zeroed() };
+    for (dst, src) in ifr.ifr_name.iter_mut().zip(name.bytes()) {
+        *dst = src as libc::c_char;
+    }
+
+    unsafe {
+        ifr.ifr_ifru.ifru_flags = IFF_TAP | IFF_NO_PI;
+        let rc = libc::ioctl(file.as_raw_fd(), TUNSETIFF, &mut ifr);
         if rc < 0 {
             return Err(io::Error::last_os_error());
         }
-
-        Ok(Self { file })
     }
+
+    Ok(TapInterface { file })
 }
 
 impl crate::interface::FrameIo for TapInterface {

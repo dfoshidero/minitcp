@@ -8,30 +8,20 @@ Licensed under [MIT](LICENSE). Pull requests: [CONTRIBUTING.md](docs/CONTRIBUTIN
 
 Terms used in the code are defined in [GLOSSARY.md](docs/GLOSSARY.md).
 
-## Run with Docker
-
-Install Docker (Docker Engine on Linux, or Docker Desktop on macOS/Windows). Then:
+## Install
 
 ```bash
-docker run --rm -it --pull always \
-  --cap-add=NET_ADMIN \
-  --cap-add=NET_RAW \
-  --device=/dev/net/tun \
-  ghcr.io/dfoshidero/minitcp:latest
+curl -fsSL https://github.com/dfoshidero/minitcp/releases/latest/download/install.sh | sh
+minitcp tap up    # optional; needs Docker
+minitcp           # TUI on this terminal; : is host $SHELL
+minitcp tap down
 ```
 
-That always pulls the latest published image, opens a shell with `minitcp` on `PATH`, then prints `minitcp --help`. Run `minitcp` for the terminal lab (`q` returns to the shell).
+That puts `minitcp` in `~/.local/bin` (add that directory to `PATH` if the script says so). Pin a release with `VERSION=1.1.0` in front of the curl.
 
-If you really want to, you can pass subcommands on the same `docker run` line, for example add `stack` at the end. You can however also do this directly in the image, `minitcp stack`.
+TAP is a Linux kernel device. `minitcp tap up` starts a sidecar that owns `tap0` and forwards frames to `127.0.0.1:7946`. On Linux with `/dev/net/tun`, MiniTCP can use a local TAP instead (no Docker). The host does not get a route into `10.0.0.2`; ping that address from Linux that owns the TAP (the sidecar, or this machine if TAP is local). The `p` key in the TUI does that for you when the sidecar is up.
 
-The image is `linux/amd64` and `linux/arm64` (Intel/AMD Linux, and Apple Silicon via Docker Desktop). TAP is a Linux kernel device, so on macOS or Windows the lab runs in Docker’s Linux VM.
-
-On Linux with Rust, `ip`, `ping`, `tcpdump`, `/dev/net/tun`, and permission to create TAP interfaces, you can instead:
-
-```bash
-cargo install --git https://github.com/dfoshidero/minitcp
-minitcp
-```
+Hacking on this repo: Dev Container or `cargo run` (below).
 
 ## Where this sits (OSI)
 
@@ -174,7 +164,7 @@ quiet = true
 drop = ["icmp"]
 ```
 
-Docker: mount the file into `/home/netstack` (the image workdir).
+Same file works next to the host binary; the sidecar does not need it.
 
 ## Pcap (record and replay)
 
@@ -275,14 +265,18 @@ IPv4 notes that are easy to miss:
 ## Layout
 
 - `docs/GLOSSARY.md` — short definitions of terms the code uses.
-- `docker/Dockerfile` — published lab image (`ghcr.io/dfoshidero/minitcp`). The Dev Container image is `.devcontainer/Dockerfile`.
-- `scripts/setup-tap.sh` — manually create and bring up `tap0`; the lab does this automatically.
-- `src/main.rs` — command dispatcher: terminal lab by default, `stack`, `replay`, `pcap-info`.
+- `docker/Dockerfile` — TAP sidecar image (`ghcr.io/dfoshidero/minitcp`). The Dev Container image is `.devcontainer/Dockerfile`.
+- `scripts/install.sh` — one-line install of the host binary from GitHub Releases.
+- `scripts/setup-tap.sh` — manually create and bring up `tap0` in the Dev Container; the lab does this automatically.
+- `src/main.rs` — command dispatcher: terminal lab by default, `stack`, `tap up`/`down`, `bridge`, `replay`, `pcap-info`.
 - `src/cli/` — flags, `minitcp.toml`, `--help`, and parse errors.
-- `src/stack.rs` — frame loop: TAP, pcap, or hex; dispatch to a protocol; write a reply.
+- `src/stack.rs` — frame loop: TAP, TCP sidecar frames, pcap, or hex; dispatch to a protocol; write a reply.
+- `src/tapcmd.rs` — host `tap up` / `tap down` (Docker sidecar or local Linux TAP).
+- `src/update.rs` — optional GitHub Releases nag (prompt only).
 - `src/log.rs` — quiet one-liner, or verbose `[IN]` / `[OUT]` / `[..]` peel.
 - `src/tui/` — terminal UI: split panes, child processes, key actions, and scrollback.
 - `src/interface/tap.rs` — open `/dev/net/tun`, read/write raw frames. No protocol parsing.
+- `src/interface/fwd.rs` — length-prefixed Ethernet frames over TCP (sidecar).
 - `src/interface/pcap.rs` — classic pcap read/write, `pcap-info`, and hex frames.
 - `src/proto/` — wire formats MiniTCP speaks:
   - `ethernet.rs` — Ethernet II: destination MAC, source MAC, EtherType, payload.

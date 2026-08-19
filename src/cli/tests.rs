@@ -188,3 +188,16 @@ fn default_minitcp_toml_in_cwd_is_loaded() {
     assert_eq!(cfg.iface, "tap1");
     let _ = fs::remove_dir_all(dir);
 }
+
+#[test]
+fn tap_up_and_down_and_bridge_parse() {
+    assert_eq!(parse_ok(&["tap", "up"]).command, Command::TapUp);
+    assert_eq!(parse_ok(&["tap", "down"]).command, Command::TapDown);
+    assert_eq!(parse_ok(&["bridge"]).command, Command::Bridge);
+    let err = parse_err(&["tap"]);
+    assert!(err.contains("tap needs up or down"), "{err}");
+    let fwd = parse_ok(&["--fwd", "127.0.0.1:7946"]);
+    assert_eq!(fwd.fwd.as_deref(), Some("127.0.0.1:7946"));
+    assert!(parse_ok(&["--offline"]).offline);
+    assert!(parse_ok(&["--tap"]).force_tap);
+}

@@ -17,6 +17,8 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
 use ratatui::{DefaultTerminal, Frame};
 
 use crate::cli::Config;
+use crate::interface::fwd::DEFAULT_FWD;
+use crate::tapcmd::CONTAINER;
 
 const MAX_LINES: usize = 2000;
 
@@ -210,9 +212,8 @@ impl ChildProc {
             DumpFilter::Arp => " arp",
             DumpFilter::Ip => " ip",
         };
-        let script = format!(
-            "echo __MINITCP_DUMP_PID=$$; exec tcpdump -eni {iface} -l{filter_arg}"
-        );
+        let script =
+            format!("echo __MINITCP_DUMP_PID=$$; exec tcpdump -eni {iface} -l{filter_arg}");
         let mut cmd = Command::new("sudo");
         cmd.args(["-n", "sh", "-c", &script])
             .stdin(Stdio::null())
@@ -234,8 +235,9 @@ impl ChildProc {
     }
 
     fn spawn_action(command: &str) -> std::io::Result<Self> {
-        let mut cmd = Command::new("sh");
-        cmd.args(["-lc", command])
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".into());
+        let mut cmd = Command::new(shell);
+        cmd.args(["-c", command])
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -427,13 +429,7 @@ fn ensure_tap(cfg: &Config, tx: &Sender<Msg>) {
         .ok()
         .map(|o| String::from_utf8_lossy(&o.stdout).contains(&cidr))
         .unwrap_or(false);
-    if !has_addr
-        && !setup_command(
-            tx,
-            "sudo",
-            &["ip", "addr", "add", &cidr, "dev", &cfg.iface],
-        )
-    {
+    if !has_addr && !setup_command(tx, "sudo", &["ip", "addr", "add", &cidr, "dev", &cfg.iface]) {
         return;
     }
     setup_command(tx, "sudo", &["ip", "link", "set", "dev", &cfg.iface, "up"]);
@@ -508,39 +504,66 @@ fn run_short(tx: &Sender<Msg>, program: &str, args: &[&str]) {
 }
 
 impl Lab {
-    fn start(cfg: Config) -> std::io::Result<Self> {
+    fn start(mut cfg: Config) -> std::io::Result<Self> {
         let (tx, rx) = mpsc::channel();
-        ensure_tap(&cfg, &tx);
+        let remote = cfg.use_fwd();
+        if remote && cfg.fwd.is_none() {
+            cfg.fwd = Some(DEFAULT_FWD.into());
+        }
+        if !remote {
+            ensure_tap(&cfg, &tx);
+        }
 
         let verbose = !cfg.quiet;
         let mut stack = ChildProc::spawn_stack(&cfg, verbose)?;
         attach_child(&mut stack, tx.clone(), Msg::Stack);
 
         let filter = DumpFilter::All;
-        let mut dump = match ChildProc::spawn_dump(filter, &cfg.iface) {
-            Ok(mut d) => {
-                attach_child(&mut d, tx.clone(), Msg::Dump);
-                d
+        let mut dump = if remote {
+            let _ = tx.send(Msg::Dump(
+                "TAP lives in the sidecar (`minitcp tap up`). tcpdump is not on this host.".into(),
+            ));
+            ChildProc {
+                child: None,
+                privileged: true,
+                command_pid: None,
             }
-            Err(e) => {
-                let _ = tx.send(Msg::Dump(format!("tcpdump not started: {e}")));
-                ChildProc {
-                    child: None,
-                    privileged: true,
-                    command_pid: None,
+        } else {
+            match ChildProc::spawn_dump(filter, &cfg.iface) {
+                Ok(mut d) => {
+                    attach_child(&mut d, tx.clone(), Msg::Dump);
+                    d
+                }
+                Err(e) => {
+                    let _ = tx.send(Msg::Dump(format!("tcpdump not started: {e}")));
+                    ChildProc {
+                        child: None,
+                        privileged: true,
+                        command_pid: None,
+                    }
                 }
             }
         };
 
         let linux = cfg.linux_addr.to_string();
-        let (tap_up, tap_addr) = tap_status(&cfg.iface, &linux);
+        let (tap_up, tap_addr) = if remote {
+            (true, cfg.fwd_addr())
+        } else {
+            tap_status(&cfg.iface, &linux)
+        };
         let stack_alive = stack.alive();
         let dump_alive = dump.alive();
         let mut action_buf = Buffer::new();
         action_buf
             .push("lab ready. Tab focuses a pane. p ping  n neigh  f flush  d dump filter.".into());
+        if remote {
+            action_buf.push(
+                "frames via TAP sidecar. ping 10.0.0.2 from Linux that owns tap0 (p uses docker exec)."
+                    .into(),
+            );
+        }
         if !stack_alive {
-            action_buf.push("stack failed to stay up — try ./scripts/setup-tap.sh then r".into());
+            action_buf.push("stack failed to stay up — try minitcp tap up then r".into());
         }
 
         Ok(Self {
@@ -600,13 +623,23 @@ impl Lab {
     }
 
     fn restart_dump(&mut self) {
+        if self.cfg.fwd.is_some() {
+            self.push_pane(
+                Pane::Dump,
+                "tcpdump is not on this host; TAP is in the sidecar.".into(),
+            );
+            return;
+        }
         self.dump.kill();
         match ChildProc::spawn_dump(self.filter, &self.cfg.iface) {
             Ok(mut c) => {
                 attach_child(&mut c, self.tx.clone(), Msg::Dump);
                 self.dump = c;
                 self.dump_alive = true;
-                self.push_pane(Pane::Dump, format!("— {} —", self.filter.title(&self.cfg.iface)));
+                self.push_pane(
+                    Pane::Dump,
+                    format!("— {} —", self.filter.title(&self.cfg.iface)),
+                );
             }
             Err(e) => self.push_pane(Pane::Dump, format!("tcpdump failed: {e}")),
         }
@@ -708,10 +741,12 @@ impl Lab {
 
     fn refresh_status(&mut self) {
         if self.last_status.elapsed() > Duration::from_millis(800) {
-            let linux = self.cfg.linux_addr.to_string();
-            let (up, addr) = tap_status(&self.cfg.iface, &linux);
-            self.tap_up = up;
-            self.tap_addr = addr;
+            if self.cfg.fwd.is_none() {
+                let linux = self.cfg.linux_addr.to_string();
+                let (up, addr) = tap_status(&self.cfg.iface, &linux);
+                self.tap_up = up;
+                self.tap_addr = addr;
+            }
             let stack_alive = self.stack.alive();
             let dump_alive = self.dump.alive();
             if self.stack_alive && !stack_alive {
@@ -783,22 +818,49 @@ impl Lab {
             KeyCode::Char('p') => {
                 let tx = self.tx.clone();
                 let addr = self.cfg.addr.to_string();
+                let sidecar = self.cfg.fwd.is_some();
                 thread::spawn(move || {
-                    run_short(&tx, "ping", &["-c", "1", "-W", "1", &addr]);
+                    if sidecar {
+                        run_short(
+                            &tx,
+                            "docker",
+                            &["exec", CONTAINER, "ping", "-c", "1", "-W", "1", &addr],
+                        );
+                    } else {
+                        run_short(&tx, "ping", &["-c", "1", "-W", "1", &addr]);
+                    }
                 });
             }
             KeyCode::Char('n') => {
                 let tx = self.tx.clone();
                 let iface = self.cfg.iface.clone();
+                let sidecar = self.cfg.fwd.is_some();
                 thread::spawn(move || {
-                    run_short(&tx, "ip", &["neigh", "show", "dev", &iface]);
+                    if sidecar {
+                        run_short(
+                            &tx,
+                            "docker",
+                            &["exec", CONTAINER, "ip", "neigh", "show", "dev", &iface],
+                        );
+                    } else {
+                        run_short(&tx, "ip", &["neigh", "show", "dev", &iface]);
+                    }
                 });
             }
             KeyCode::Char('f') => {
                 let tx = self.tx.clone();
                 let iface = self.cfg.iface.clone();
+                let sidecar = self.cfg.fwd.is_some();
                 thread::spawn(move || {
-                    run_short(&tx, "sudo", &["ip", "neigh", "flush", "dev", &iface]);
+                    if sidecar {
+                        run_short(
+                            &tx,
+                            "docker",
+                            &["exec", CONTAINER, "ip", "neigh", "flush", "dev", &iface],
+                        );
+                    } else {
+                        run_short(&tx, "sudo", &["ip", "neigh", "flush", "dev", &iface]);
+                    }
                 });
             }
             KeyCode::Char('r') => self.restart_stack(),

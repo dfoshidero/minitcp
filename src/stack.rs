@@ -5,9 +5,9 @@ use std::net::Ipv4Addr;
 use std::path::Path;
 
 use crate::cli::{Command, Config, DropKind};
+use crate::interface::FrameIo;
 use crate::interface::pcap::{CaptureIo, HexReader, PcapReader, PcapWriter};
 use crate::interface::tap::TapInterface;
-use crate::interface::FrameIo;
 use crate::log::{self, Verb};
 use crate::proto::arp::reply_for;
 use crate::proto::ethernet::{EthernetFrame, EthernetType};
@@ -114,7 +114,7 @@ fn open_tap(cfg: &Config) -> TapInterface {
     let sys = format!("/sys/class/net/{}", cfg.iface);
     if !Path::new(&sys).exists() {
         eprintln!("{} is not up yet. Create it first:", cfg.iface);
-        eprintln!("  ./scripts/setup-tap.sh");
+        eprintln!("  minitcp tap up");
         std::process::exit(1);
     }
 
@@ -122,10 +122,18 @@ fn open_tap(cfg: &Config) -> TapInterface {
         Ok(tap) => tap,
         Err(e) => {
             eprintln!("cannot attach to {}: {e}", cfg.iface);
-            eprintln!("Try:  ./scripts/setup-tap.sh");
+            eprintln!("Try:  minitcp tap up");
             std::process::exit(1);
         }
     }
+}
+
+pub fn run_bridge(cfg: Config) -> std::io::Result<()> {
+    if !cfg.no_create_tap {
+        crate::interface::tap::ensure_iface(&cfg.iface, cfg.linux_addr)?;
+    }
+    let tap = open_tap(&cfg);
+    crate::interface::fwd::run_bridge(&cfg.listen, tap)
 }
 
 pub fn run_stack(cfg: Config) -> std::io::Result<()> {
@@ -135,6 +143,23 @@ pub fn run_stack(cfg: Config) -> std::io::Result<()> {
     }
     if cfg.hex {
         return run_io(cfg, HexReader::new(BufReader::new(io::stdin())));
+    }
+    if cfg.use_fwd() {
+        let addr = cfg.fwd_addr();
+        match crate::interface::fwd::TcpFrames::connect(&addr) {
+            Ok(frames) => {
+                eprintln!(
+                    "listening {} via {addr} as {} ({})",
+                    cfg.iface, cfg.addr, cfg.mac
+                );
+                return run_io(cfg, frames);
+            }
+            Err(e) => {
+                eprintln!("cannot connect to TAP sidecar at {addr}: {e}");
+                eprintln!("Start it with:  minitcp tap up");
+                std::process::exit(1);
+            }
+        }
     }
     let tap = open_tap(&cfg);
     eprintln!("listening {} as {} ({})", cfg.iface, cfg.addr, cfg.mac);
@@ -173,282 +198,275 @@ fn handle_frame(cfg: &Config, bytes: &[u8], rng: &mut SeededRng) -> Option<Vec<u
     let our_mac = cfg.mac;
     let when = log::now();
 
-        let frame = match EthernetFrame::parse(bytes) {
-            Ok(frame) => frame,
-            Err(e) => {
-                log::emit_at(&when, Verb::Drop, "ethernet", "L2", "", e);
-                return None;
-            }
-        };
-
-        let macs = format!("{} -> {}", frame.source, frame.destination);
-
-        if drop_pct_hit(cfg.drop_pct, rng) {
-            log::emit_at(&when, Verb::Drop, "ethernet", "L2", &macs, "random drop");
+    let frame = match EthernetFrame::parse(bytes) {
+        Ok(frame) => frame,
+        Err(e) => {
+            log::emit_at(&when, Verb::Drop, "ethernet", "L2", "", e);
             return None;
         }
-        if cfg.drop.contains(&DropKind::Arp) && frame.ethertype == EthernetType::Arp {
-            log::emit_at(&when, Verb::Drop, "arp", "L2", &macs, "dropped");
-            return None;
-        }
-        if cfg.drop.contains(&DropKind::Ip) && frame.ethertype == EthernetType::Ipv4 {
-            log::emit_at(&when, Verb::Drop, "ipv4", "L3", &macs, "dropped");
-            return None;
-        }
+    };
 
-        match frame.ethertype {
-            EthernetType::Arp => {
-                let Some(reply) = reply_for(frame.payload, our_ip, our_mac) else {
-                    if verbose {
-                        log::emit_at(&when, Verb::In, "ethernet", "L2", &macs, "ethertype 0x0806");
-                        let arp_addrs = arp_addrs(frame.payload)
-                            .map(|(spa, tpa)| ip_pair(spa, tpa))
-                            .unwrap_or_default();
-                        log::emit_cont(&when, Verb::More, "arp", "L2", &arp_addrs, "who-has");
-                    }
-                    return None;
-                };
+    let macs = format!("{} -> {}", frame.source, frame.destination);
 
-                let (spa, tpa) = arp_addrs(frame.payload).unwrap();
-                let mut ethernet_reply = Vec::new();
-                EthernetFrame::write_ethernet(
-                    &mut ethernet_reply,
-                    frame.source,
-                    our_mac,
-                    0x0806,
-                    &reply,
-                );
+    if drop_pct_hit(cfg.drop_pct, rng) {
+        log::emit_at(&when, Verb::Drop, "ethernet", "L2", &macs, "random drop");
+        return None;
+    }
+    if cfg.drop.contains(&DropKind::Arp) && frame.ethertype == EthernetType::Arp {
+        log::emit_at(&when, Verb::Drop, "arp", "L2", &macs, "dropped");
+        return None;
+    }
+    if cfg.drop.contains(&DropKind::Ip) && frame.ethertype == EthernetType::Ipv4 {
+        log::emit_at(&when, Verb::Drop, "ipv4", "L3", &macs, "dropped");
+        return None;
+    }
 
+    match frame.ethertype {
+        EthernetType::Arp => {
+            let Some(reply) = reply_for(frame.payload, our_ip, our_mac) else {
                 if verbose {
                     log::emit_at(&when, Verb::In, "ethernet", "L2", &macs, "ethertype 0x0806");
-                    log::emit_cont(
-                        &when,
-                        Verb::More,
-                        "arp",
-                        "L2",
-                        &ip_pair(spa, tpa),
-                        "who-has",
-                    );
-                    log::emit_cont(
-                        &when,
-                        Verb::Out,
-                        "ethernet",
-                        "L2",
-                        &format!("{} -> {}", our_mac, frame.source),
-                        "ethertype 0x0806",
-                    );
-                    log::emit_cont(
-                        &when,
-                        Verb::More,
-                        "arp",
-                        "L2",
-                        &ip_pair(Ipv4Addr::from(our_ip), spa),
-                        &format!("is-at {our_mac}"),
-                    );
-                } else {
-                    log::emit_quiet(&when, "arp", &ip_pair(spa, tpa), "who-has");
+                    let arp_addrs = arp_addrs(frame.payload)
+                        .map(|(spa, tpa)| ip_pair(spa, tpa))
+                        .unwrap_or_default();
+                    log::emit_cont(&when, Verb::More, "arp", "L2", &arp_addrs, "who-has");
                 }
-                return Some(ethernet_reply);
-            }
-            EthernetType::Ipv4 => match Ipv4Packet::parse(frame.payload) {
-                Ok(packet) => {
-                    let ip_addrs = ip_pair(packet.source, packet.destination);
-                    if verbose {
-                        log::emit_at(&when, Verb::In, "ethernet", "L2", &macs, "ethertype 0x0800");
-                        log::emit_cont(
-                            &when,
-                            Verb::More,
-                            "ipv4",
-                            "L3",
-                            &ip_addrs,
-                            &format!(
-                                "ttl={} proto={} payload={}",
-                                packet.ttl,
-                                protocol_name(packet.protocol),
-                                packet.payload.len()
-                            ),
-                        );
-                    }
+                return None;
+            };
 
-                    match packet.protocol {
-                        Protocol::Icmp => {
-                            if packet.destination.octets() != our_ip {
-                                if verbose {
-                                    log::emit_inside(&when, Verb::Drop, "icmp", "L3", "not for us");
-                                } else {
-                                    log::emit_at(
-                                        &when,
-                                        Verb::Drop,
-                                        "icmp",
-                                        "L3",
-                                        &ip_addrs,
-                                        "not for us",
-                                    );
-                                }
-                                return None;
-                            }
-                            if cfg.drop.contains(&DropKind::Icmp) {
-                                if verbose {
-                                    log::emit_inside(&when, Verb::Drop, "icmp", "L3", "dropped");
-                                } else {
-                                    log::emit_at(
-                                        &when,
-                                        Verb::Drop,
-                                        "icmp",
-                                        "L3",
-                                        &ip_addrs,
-                                        "dropped",
-                                    );
-                                }
-                                return None;
-                            }
+            let (spa, tpa) = arp_addrs(frame.payload).unwrap();
+            let mut ethernet_reply = Vec::new();
+            EthernetFrame::write_ethernet(
+                &mut ethernet_reply,
+                frame.source,
+                our_mac,
+                0x0806,
+                &reply,
+            );
+
+            if verbose {
+                log::emit_at(&when, Verb::In, "ethernet", "L2", &macs, "ethertype 0x0806");
+                log::emit_cont(
+                    &when,
+                    Verb::More,
+                    "arp",
+                    "L2",
+                    &ip_pair(spa, tpa),
+                    "who-has",
+                );
+                log::emit_cont(
+                    &when,
+                    Verb::Out,
+                    "ethernet",
+                    "L2",
+                    &format!("{} -> {}", our_mac, frame.source),
+                    "ethertype 0x0806",
+                );
+                log::emit_cont(
+                    &when,
+                    Verb::More,
+                    "arp",
+                    "L2",
+                    &ip_pair(Ipv4Addr::from(our_ip), spa),
+                    &format!("is-at {our_mac}"),
+                );
+            } else {
+                log::emit_quiet(&when, "arp", &ip_pair(spa, tpa), "who-has");
+            }
+            return Some(ethernet_reply);
+        }
+        EthernetType::Ipv4 => match Ipv4Packet::parse(frame.payload) {
+            Ok(packet) => {
+                let ip_addrs = ip_pair(packet.source, packet.destination);
+                if verbose {
+                    log::emit_at(&when, Verb::In, "ethernet", "L2", &macs, "ethertype 0x0800");
+                    log::emit_cont(
+                        &when,
+                        Verb::More,
+                        "ipv4",
+                        "L3",
+                        &ip_addrs,
+                        &format!(
+                            "ttl={} proto={} payload={}",
+                            packet.ttl,
+                            protocol_name(packet.protocol),
+                            packet.payload.len()
+                        ),
+                    );
+                }
+
+                match packet.protocol {
+                    Protocol::Icmp => {
+                        if packet.destination.octets() != our_ip {
                             if verbose {
-                                log::emit_inside(
+                                log::emit_inside(&when, Verb::Drop, "icmp", "L3", "not for us");
+                            } else {
+                                log::emit_at(
                                     &when,
-                                    Verb::More,
+                                    Verb::Drop,
                                     "icmp",
                                     "L3",
-                                    &icmp_decode(packet.payload),
+                                    &ip_addrs,
+                                    "not for us",
                                 );
                             }
+                            return None;
+                        }
+                        if cfg.drop.contains(&DropKind::Icmp) {
+                            if verbose {
+                                log::emit_inside(&when, Verb::Drop, "icmp", "L3", "dropped");
+                            } else {
+                                log::emit_at(&when, Verb::Drop, "icmp", "L3", &ip_addrs, "dropped");
+                            }
+                            return None;
+                        }
+                        if verbose {
+                            log::emit_inside(
+                                &when,
+                                Verb::More,
+                                "icmp",
+                                "L3",
+                                &icmp_decode(packet.payload),
+                            );
+                        }
 
-                            match make_echo_reply(packet.payload) {
-                                Ok(mut icmp_reply) => {
-                                    if let Some(id) = cfg.icmp_id {
-                                        set_echo_id(&mut icmp_reply, id);
-                                    }
-                                    let mut ip_packet = Vec::new();
-                                    Ipv4Packet::write(
-                                        &mut ip_packet,
-                                        cfg.ttl,
-                                        Protocol::Icmp,
-                                        Ipv4Addr::from(our_ip),
-                                        packet.source,
-                                        &icmp_reply,
-                                    );
-                                    let mut ethernet_reply = Vec::new();
-                                    EthernetFrame::write_ethernet(
-                                        &mut ethernet_reply,
-                                        frame.source,
-                                        our_mac,
-                                        0x0800,
-                                        &ip_packet,
-                                    );
-                                    if verbose {
-                                        log::emit_cont(
-                                            &when,
-                                            Verb::Out,
-                                            "ethernet",
-                                            "L2",
-                                            &format!("{} -> {}", our_mac, frame.source),
-                                            "ethertype 0x0800",
-                                        );
-                                        log::emit_cont(
-                                            &when,
-                                            Verb::More,
-                                            "ipv4",
-                                            "L3",
-                                            &ip_pair(Ipv4Addr::from(our_ip), packet.source),
-                                            &format!(
-                                                "ttl={} proto=icmp payload={}",
-                                                cfg.ttl,
-                                                icmp_reply.len()
-                                            ),
-                                        );
-                                        log::emit_inside(
-                                            &when,
-                                            Verb::More,
-                                            "icmp",
-                                            "L3",
-                                            &icmp_decode(&icmp_reply),
-                                        );
-                                    } else {
-                                        log::emit_quiet(
-                                            &when,
-                                            "icmp",
-                                            &ip_addrs,
-                                            &icmp_quiet(packet.payload),
-                                        );
-                                    }
-                                    return Some(ethernet_reply);
+                        match make_echo_reply(packet.payload) {
+                            Ok(mut icmp_reply) => {
+                                if let Some(id) = cfg.icmp_id {
+                                    set_echo_id(&mut icmp_reply, id);
                                 }
-                                Err(e) => {
-                                    if verbose {
-                                        log::emit_inside(&when, Verb::Drop, "icmp", "L3", e);
-                                    } else {
-                                        log::emit_at(&when, Verb::Drop, "icmp", "L3", &ip_addrs, e);
-                                    }
+                                let mut ip_packet = Vec::new();
+                                Ipv4Packet::write(
+                                    &mut ip_packet,
+                                    cfg.ttl,
+                                    Protocol::Icmp,
+                                    Ipv4Addr::from(our_ip),
+                                    packet.source,
+                                    &icmp_reply,
+                                );
+                                let mut ethernet_reply = Vec::new();
+                                EthernetFrame::write_ethernet(
+                                    &mut ethernet_reply,
+                                    frame.source,
+                                    our_mac,
+                                    0x0800,
+                                    &ip_packet,
+                                );
+                                if verbose {
+                                    log::emit_cont(
+                                        &when,
+                                        Verb::Out,
+                                        "ethernet",
+                                        "L2",
+                                        &format!("{} -> {}", our_mac, frame.source),
+                                        "ethertype 0x0800",
+                                    );
+                                    log::emit_cont(
+                                        &when,
+                                        Verb::More,
+                                        "ipv4",
+                                        "L3",
+                                        &ip_pair(Ipv4Addr::from(our_ip), packet.source),
+                                        &format!(
+                                            "ttl={} proto=icmp payload={}",
+                                            cfg.ttl,
+                                            icmp_reply.len()
+                                        ),
+                                    );
+                                    log::emit_inside(
+                                        &when,
+                                        Verb::More,
+                                        "icmp",
+                                        "L3",
+                                        &icmp_decode(&icmp_reply),
+                                    );
+                                } else {
+                                    log::emit_quiet(
+                                        &when,
+                                        "icmp",
+                                        &ip_addrs,
+                                        &icmp_quiet(packet.payload),
+                                    );
                                 }
+                                return Some(ethernet_reply);
                             }
-                        }
-                        Protocol::Udp => {
-                            if verbose {
-                                log::emit_inside(&when, Verb::Drop, "udp", "L4", "not implemented");
-                            } else {
-                                log::emit_at(
-                                    &when,
-                                    Verb::Drop,
-                                    "udp",
-                                    "L4",
-                                    &ip_addrs,
-                                    "not implemented",
-                                );
-                            }
-                        }
-                        Protocol::Tcp => {
-                            if verbose {
-                                log::emit_inside(&when, Verb::Drop, "tcp", "L4", "not implemented");
-                            } else {
-                                log::emit_at(
-                                    &when,
-                                    Verb::Drop,
-                                    "tcp",
-                                    "L4",
-                                    &ip_addrs,
-                                    "not implemented",
-                                );
-                            }
-                        }
-                        Protocol::Unknown(n) => {
-                            let reason = format!("unknown protocol {n}");
-                            if verbose {
-                                log::emit_cont(&when, Verb::Drop, "ipv4", "L3", "", &reason);
-                            } else {
-                                log::emit_at(&when, Verb::Drop, "ipv4", "L3", &ip_addrs, &reason);
+                            Err(e) => {
+                                if verbose {
+                                    log::emit_inside(&when, Verb::Drop, "icmp", "L3", e);
+                                } else {
+                                    log::emit_at(&when, Verb::Drop, "icmp", "L3", &ip_addrs, e);
+                                }
                             }
                         }
                     }
-                }
-                Err(e) => {
-                    if verbose {
-                        log::emit_at(&when, Verb::In, "ethernet", "L2", &macs, "ethertype 0x0800");
-                        log::emit_cont(&when, Verb::Drop, "ipv4", "L3", "", e);
-                    } else {
-                        log::emit_at(&when, Verb::Drop, "ipv4", "L3", "", e);
+                    Protocol::Udp => {
+                        if verbose {
+                            log::emit_inside(&when, Verb::Drop, "udp", "L4", "not implemented");
+                        } else {
+                            log::emit_at(
+                                &when,
+                                Verb::Drop,
+                                "udp",
+                                "L4",
+                                &ip_addrs,
+                                "not implemented",
+                            );
+                        }
                     }
-                }
-            },
-            EthernetType::Unknown(n) => {
-                if verbose {
-                    log::emit_at(
-                        &when,
-                        Verb::In,
-                        "ethernet",
-                        "L2",
-                        &macs,
-                        &format!("ethertype 0x{n:04x}"),
-                    );
+                    Protocol::Tcp => {
+                        if verbose {
+                            log::emit_inside(&when, Verb::Drop, "tcp", "L4", "not implemented");
+                        } else {
+                            log::emit_at(
+                                &when,
+                                Verb::Drop,
+                                "tcp",
+                                "L4",
+                                &ip_addrs,
+                                "not implemented",
+                            );
+                        }
+                    }
+                    Protocol::Unknown(n) => {
+                        let reason = format!("unknown protocol {n}");
+                        if verbose {
+                            log::emit_cont(&when, Verb::Drop, "ipv4", "L3", "", &reason);
+                        } else {
+                            log::emit_at(&when, Verb::Drop, "ipv4", "L3", &ip_addrs, &reason);
+                        }
+                    }
                 }
             }
+            Err(e) => {
+                if verbose {
+                    log::emit_at(&when, Verb::In, "ethernet", "L2", &macs, "ethertype 0x0800");
+                    log::emit_cont(&when, Verb::Drop, "ipv4", "L3", "", e);
+                } else {
+                    log::emit_at(&when, Verb::Drop, "ipv4", "L3", "", e);
+                }
+            }
+        },
+        EthernetType::Unknown(n) => {
+            if verbose {
+                log::emit_at(
+                    &when,
+                    Verb::In,
+                    "ethernet",
+                    "L2",
+                    &macs,
+                    &format!("ethertype 0x{n:04x}"),
+                );
+            }
         }
-        None
+    }
+    None
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::cli::{Config, DropKind};
-    use crate::interface::pcap::{pcap_info, PcapReader, PcapWriter};
+    use crate::interface::pcap::{PcapReader, PcapWriter, pcap_info};
     use crate::proto::checksum::internet_checksum;
     use crate::proto::ethernet::MacAddress;
     use crate::proto::icmp::make_echo_reply;
@@ -593,7 +611,8 @@ mod tests {
         assert_eq!(&ip.payload[4..6], &[0x99, 0x99]);
         assert_eq!(internet_checksum(ip.payload), 0);
         let default = reply(&Config::defaults(), &ping_frame()).unwrap();
-        let default_ip = Ipv4Packet::parse(EthernetFrame::parse(&default).unwrap().payload).unwrap();
+        let default_ip =
+            Ipv4Packet::parse(EthernetFrame::parse(&default).unwrap().payload).unwrap();
         assert_eq!(default_ip.ttl, 64);
         assert_eq!(&default_ip.payload[4..6], &[0x12, 0x34]);
     }

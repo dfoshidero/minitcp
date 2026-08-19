@@ -5,7 +5,7 @@ use crate::proto::ethernet::MacAddress;
 
 use super::config::{Command, DropKind, Partial};
 use super::error::{
-    flag_usage, missing_value, ParseError, USAGE_COMMANDS, USAGE_PCAP_INFO, USAGE_REPLAY,
+    ParseError, USAGE_COMMANDS, USAGE_PCAP_INFO, USAGE_REPLAY, USAGE_TAP, flag_usage, missing_value,
 };
 
 pub fn parse_mac(s: &str) -> Result<MacAddress, String> {
@@ -83,13 +83,16 @@ pub(crate) fn parse_cli(args: &[String]) -> Result<Partial, ParseError> {
                 "-q" | "--quiet" => partial.quiet = Some(true),
                 "--hex" => partial.hex = Some(true),
                 "--no-create-tap" => partial.no_create_tap = Some(true),
+                "--tap" => partial.force_tap = Some(true),
+                "--offline" => partial.offline = Some(true),
                 "--once" => partial.count = Some(1),
                 "-c" | "--count" => {
                     let v = take_value(args, &mut i, arg)?;
                     partial.count = Some(parse_count(v)?);
                 }
                 "--iface" | "--addr" | "--mac" | "--linux-addr" | "--tun" | "--write"
-                | "--config" | "--drop" | "--drop-pct" | "--ttl" | "--id" => {
+                | "--config" | "--drop" | "--drop-pct" | "--ttl" | "--id" | "--fwd"
+                | "--listen" => {
                     let v = take_value(args, &mut i, arg)?;
                     apply_flag(&mut partial, arg, Some(v))?;
                 }
@@ -105,8 +108,9 @@ pub(crate) fn parse_cli(args: &[String]) -> Result<Partial, ParseError> {
             "run" => set_command(&mut partial, Command::Run)?,
             "stack" => set_command(&mut partial, Command::Stack)?,
             "replay" => {
-                let file = take_value(args, &mut i, "replay")
-                    .map_err(|_| ParseError::with_usage("replay needs a pcap path", USAGE_REPLAY))?;
+                let file = take_value(args, &mut i, "replay").map_err(|_| {
+                    ParseError::with_usage("replay needs a pcap path", USAGE_REPLAY)
+                })?;
                 set_command(&mut partial, Command::Replay(PathBuf::from(file)))?;
             }
             "pcap-info" => {
@@ -115,11 +119,26 @@ pub(crate) fn parse_cli(args: &[String]) -> Result<Partial, ParseError> {
                 })?;
                 set_command(&mut partial, Command::PcapInfo(PathBuf::from(file)))?;
             }
+            "bridge" => set_command(&mut partial, Command::Bridge)?,
+            "tap" => {
+                let sub = take_value(args, &mut i, "tap")
+                    .map_err(|_| ParseError::with_usage("tap needs up or down", USAGE_TAP))?;
+                match sub {
+                    "up" => set_command(&mut partial, Command::TapUp)?,
+                    "down" => set_command(&mut partial, Command::TapDown)?,
+                    other => {
+                        return Err(ParseError::with_usage(
+                            format!("unknown tap command '{other}' (want up or down)"),
+                            USAGE_TAP,
+                        ));
+                    }
+                }
+            }
             other => {
                 return Err(ParseError::with_usage(
                     format!("unknown command '{other}'"),
                     USAGE_COMMANDS,
-                ))
+                ));
             }
         }
         i += 1;
@@ -147,7 +166,11 @@ fn apply_flag(partial: &mut Partial, flag: &str, value: Option<&str>) -> Result<
         "--quiet" => partial.quiet = Some(true),
         "--hex" => partial.hex = Some(true),
         "--no-create-tap" => partial.no_create_tap = Some(true),
+        "--tap" => partial.force_tap = Some(true),
+        "--offline" => partial.offline = Some(true),
         "--once" => partial.count = Some(1),
+        "--fwd" => partial.fwd = Some(need()?.to_string()),
+        "--listen" => partial.listen = Some(need()?.to_string()),
         "--iface" => partial.iface = Some(need()?.to_string()),
         "--addr" => partial.addr = Some(parse_ipv4(need()?)?),
         "--mac" => partial.mac = Some(parse_mac(need()?).map_err(ParseError::msg)?),

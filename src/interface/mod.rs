@@ -1,4 +1,5 @@
 // src/interface/mod.rs
+pub mod fwd;
 pub mod pcap;
 pub mod tap;
 

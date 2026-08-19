@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use crate::proto::arp::{OUR_IP, OUR_MAC};
 use crate::proto::ethernet::MacAddress;
 
-use super::error::{flag_usage, ParseError};
+use super::error::{ParseError, flag_usage};
 
 pub const DEFAULT_IFACE: &str = "tap0";
 pub const DEFAULT_TUN: &str = "/dev/net/tun";
@@ -18,6 +18,9 @@ pub enum Command {
     Replay(PathBuf),
     PcapInfo(PathBuf),
     Help,
+    Bridge,
+    TapUp,
+    TapDown,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,6 +61,10 @@ pub struct Config {
     pub drop_pct: u8,
     pub ttl: u8,
     pub icmp_id: Option<u16>,
+    pub fwd: Option<String>,
+    pub force_tap: bool,
+    pub listen: String,
+    pub offline: bool,
 }
 
 impl Config {
@@ -79,6 +86,10 @@ impl Config {
             drop_pct: 0,
             ttl: DEFAULT_TTL,
             icmp_id: None,
+            fwd: None,
+            force_tap: false,
+            listen: crate::interface::fwd::DEFAULT_LISTEN.into(),
+            offline: false,
         }
     }
 
@@ -88,6 +99,24 @@ impl Config {
 
     pub fn verbose(&self) -> bool {
         !self.quiet
+    }
+
+    /// Host stack talks to the TAP sidecar over TCP unless a local TAP is forced
+    /// or `/dev/net/tun` is present (Linux / Dev Container).
+    pub fn use_fwd(&self) -> bool {
+        if self.force_tap {
+            return false;
+        }
+        if self.fwd.is_some() {
+            return true;
+        }
+        !self.tun.exists()
+    }
+
+    pub fn fwd_addr(&self) -> String {
+        self.fwd
+            .clone()
+            .unwrap_or_else(|| crate::interface::fwd::DEFAULT_FWD.into())
     }
 
     /// Flags the TUI child `minitcp stack` process should inherit.
@@ -144,6 +173,13 @@ impl Config {
             args.push("--id".into());
             args.push(id.to_string());
         }
+        if let Some(fwd) = &self.fwd {
+            args.push("--fwd".into());
+            args.push(fwd.clone());
+        }
+        if self.force_tap {
+            args.push("--tap".into());
+        }
         args
     }
 }
@@ -166,6 +202,10 @@ pub(crate) struct Partial {
     pub ttl: Option<u8>,
     pub icmp_id: Option<u16>,
     pub config: Option<PathBuf>,
+    pub fwd: Option<String>,
+    pub force_tap: Option<bool>,
+    pub listen: Option<String>,
+    pub offline: Option<bool>,
 }
 
 pub fn default_linux_addr(addr: Ipv4Addr) -> Ipv4Addr {
@@ -215,5 +255,17 @@ pub(crate) fn apply_partial(base: &mut Config, over: &Partial) {
     }
     if let Some(v) = over.icmp_id {
         base.icmp_id = Some(v);
+    }
+    if let Some(v) = &over.fwd {
+        base.fwd = Some(v.clone());
+    }
+    if let Some(v) = over.force_tap {
+        base.force_tap = v;
+    }
+    if let Some(v) = &over.listen {
+        base.listen = v.clone();
+    }
+    if let Some(v) = over.offline {
+        base.offline = v;
     }
 }
