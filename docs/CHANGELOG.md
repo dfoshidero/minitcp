@@ -1,3 +1,10 @@
+## [1.0.2](https://github.com/dfoshidero/minitcp/compare/v1.0.1...v1.0.2) (2026-08-19)
+
+
+### Bug Fixes
+
+* drop Docker users into a shell after help ([f8b9bbb](https://github.com/dfoshidero/minitcp/commit/f8b9bbb6b464bf95407943ce895a721a4fb6c09c))
+
 ## [1.0.1](https://github.com/dfoshidero/minitcp/compare/v1.0.0...v1.0.1) (2026-08-19)
 
 
