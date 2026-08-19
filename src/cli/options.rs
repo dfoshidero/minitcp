@@ -76,7 +76,7 @@ pub struct Config {
 
 impl Config {
     pub fn defaults() -> Self {
-        let addr = Ipv4Addr::from(OUR_IP);
+        let addr = OUR_IP;
         Self {
             command: Command::Run,
             iface: DEFAULT_IFACE.into(),
@@ -97,10 +97,6 @@ impl Config {
             offline: false,
             config_path: PathBuf::from(DEFAULT_CONFIG),
         }
-    }
-
-    pub fn our_ip_bytes(&self) -> [u8; 4] {
-        self.addr.octets()
     }
 
     pub fn verbose(&self) -> bool {

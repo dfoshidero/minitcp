@@ -26,6 +26,18 @@ pub fn make_echo_reply(request: &[u8]) -> Result<Vec<u8>, &'static str> {
     Ok(reply) // return the reply
 }
 
+/// The identifier and sequence number of an echo message (bytes 4..8). Together
+/// they are how `ping` matches a reply to the request it sent.
+pub fn id_seq(message: &[u8]) -> Option<(u16, u16)> {
+    if message.len() < 8 {
+        return None;
+    }
+    Some((
+        u16::from_be_bytes([message[4], message[5]]),
+        u16::from_be_bytes([message[6], message[7]]),
+    ))
+}
+
 pub fn set_echo_id(message: &mut [u8], id: u16) {
     if message.len() < 8 {
         return;
@@ -52,6 +64,13 @@ mod tests {
         let sum = internet_checksum(&req);
         req[2..4].copy_from_slice(&sum.to_be_bytes());
         req
+    }
+
+    #[test]
+    fn id_and_seq_come_out_of_the_header() {
+        let req = echo_request_with_payload(0x1234, 0x0007, b"hi");
+        assert_eq!(id_seq(&req), Some((0x1234, 0x0007)));
+        assert_eq!(id_seq(&req[..7]), None);
     }
 
     #[test]

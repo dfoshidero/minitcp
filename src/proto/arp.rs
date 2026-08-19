@@ -1,15 +1,28 @@
 // src/proto/arp.rs
 
+use std::net::Ipv4Addr;
+
 use super::ethernet::MacAddress;
 
 // We invented this MAC. The leading 02 marks it as "not from a real NIC (Network Interface Card) factory."
 pub const OUR_MAC: MacAddress = MacAddress([0x02, 0x00, 0x00, 0x00, 0x00, 0x02]);
-pub const OUR_IP: [u8; 4] = [10, 0, 0, 2];
+pub const OUR_IP: Ipv4Addr = Ipv4Addr::new(10, 0, 0, 2);
 
 const ARP_REQUEST: u16 = 1;
 const ARP_REPLY: u16 = 2;
 
-pub fn reply_for(request: &[u8], our_ip: [u8; 4], our_mac: MacAddress) -> Option<[u8; 28]> {
+/// The two IPv4 addresses in an ARP message: who is asking (SPA, bytes 14..18)
+/// and who they are asking about (TPA, bytes 24..28).
+pub fn addresses(payload: &[u8]) -> Option<(Ipv4Addr, Ipv4Addr)> {
+    if payload.len() < 28 {
+        return None;
+    }
+    let spa: [u8; 4] = payload[14..18].try_into().ok()?;
+    let tpa: [u8; 4] = payload[24..28].try_into().ok()?;
+    Some((Ipv4Addr::from(spa), Ipv4Addr::from(tpa)))
+}
+
+pub fn reply_for(request: &[u8], our_ip: Ipv4Addr, our_mac: MacAddress) -> Option<[u8; 28]> {
     // Linux uses ARP to learn our MAC before it can send IPv4 to 10.0.0.2.
     // Ethernet+IPv4 ARP is a fixed 28-byte layout, so we can use constant offsets.
     if request.len() < 28 {
@@ -30,7 +43,8 @@ pub fn reply_for(request: &[u8], our_ip: [u8; 4], our_mac: MacAddress) -> Option
         return None;
     }
 
-    let target_ip: [u8; 4] = request[24..28].try_into().ok()?; // [24..28] TPA: "who has this IP?"
+    // [14..18] SPA: who asked. [24..28] TPA: "who has this IP?"
+    let (requester_ip, target_ip) = addresses(request)?;
 
     // ignore replies and requests for other IP addresses
     if operation != ARP_REQUEST || target_ip != our_ip {
@@ -38,8 +52,7 @@ pub fn reply_for(request: &[u8], our_ip: [u8; 4], our_mac: MacAddress) -> Option
     }
 
     // store sender hardware address (remember it for later)
-    let requester_mac: [u8; 6] = request[8..14].try_into().ok()?; // [8..14] SHA: who asked (sender's hardware address, also Ethernet destination in main.rs)
-    let requester_ip: [u8; 4] = request[14..18].try_into().ok()?; // [14..18] SPA: sender's protocol address
+    let requester_mac: [u8; 6] = request[8..14].try_into().ok()?; // [8..14] SHA: who asked (also the Ethernet destination of our reply)
 
     // Same 28-byte layout, roles swapped: we are the sender, they are the target (build the reply)
     let mut reply = [0u8; 28];
@@ -51,9 +64,9 @@ pub fn reply_for(request: &[u8], our_ip: [u8; 4], our_mac: MacAddress) -> Option
     reply[6..8].copy_from_slice(&ARP_REPLY.to_be_bytes()); // OPER: operation (reply)
 
     reply[8..14].copy_from_slice(&our_mac.0); // SHA: our MAC — this is what Linux stores in `ip neigh`
-    reply[14..18].copy_from_slice(&our_ip); // SPA: our IP
+    reply[14..18].copy_from_slice(&our_ip.octets()); // SPA: our IP
     reply[18..24].copy_from_slice(&requester_mac); // THA: target's hardware address (their MAC)
-    reply[24..28].copy_from_slice(&requester_ip); // TPA: target's protocol address (their IP)
+    reply[24..28].copy_from_slice(&requester_ip.octets()); // TPA: target's protocol address (their IP)
 
     Some(reply)
 }
@@ -67,9 +80,9 @@ mod tests {
         0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0a, 0x00, 0x00, 0x02,
     ];
 
-    fn who_has(target: [u8; 4]) -> [u8; 28] {
+    fn who_has(target: Ipv4Addr) -> [u8; 28] {
         let mut req = WHO_HAS_10_0_0_2;
-        req[24..28].copy_from_slice(&target);
+        req[24..28].copy_from_slice(&target.octets());
         req
     }
 
@@ -77,22 +90,31 @@ mod tests {
     fn default_identity_still_answers() {
         let reply = reply_for(&WHO_HAS_10_0_0_2, OUR_IP, OUR_MAC).unwrap();
         assert_eq!(&reply[8..14], &OUR_MAC.0);
-        assert_eq!(&reply[14..18], &OUR_IP);
+        assert_eq!(&reply[14..18], &OUR_IP.octets());
         assert_eq!(&reply[24..28], &[10, 0, 0, 1]);
     }
 
     #[test]
     fn custom_ip_and_mac_are_independent() {
-        let ip = [10, 0, 0, 3];
+        let ip = Ipv4Addr::new(10, 0, 0, 3);
         let mac = MacAddress([0x02, 0x00, 0x00, 0x00, 0x00, 0x03]);
         assert!(reply_for(&who_has(OUR_IP), ip, mac).is_none());
         let reply = reply_for(&who_has(ip), ip, mac).unwrap();
         assert_eq!(&reply[8..14], &mac.0);
-        assert_eq!(&reply[14..18], &ip);
+        assert_eq!(&reply[14..18], &ip.octets());
 
         let default_ip_new_mac = MacAddress([0x02, 0x00, 0x00, 0x00, 0x00, 0x09]);
         let reply = reply_for(&WHO_HAS_10_0_0_2, OUR_IP, default_ip_new_mac).unwrap();
         assert_eq!(&reply[8..14], &default_ip_new_mac.0);
-        assert_eq!(&reply[14..18], &OUR_IP);
+        assert_eq!(&reply[14..18], &OUR_IP.octets());
+    }
+
+    #[test]
+    fn addresses_reads_sender_then_target() {
+        assert_eq!(
+            addresses(&WHO_HAS_10_0_0_2),
+            Some((Ipv4Addr::new(10, 0, 0, 1), Ipv4Addr::new(10, 0, 0, 2)))
+        );
+        assert_eq!(addresses(&WHO_HAS_10_0_0_2[..27]), None);
     }
 }
