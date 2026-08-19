@@ -1,3 +1,10 @@
+## [1.1.2](https://github.com/dfoshidero/minitcp/compare/v1.1.1...v1.1.2) (2026-08-19)
+
+
+### Bug Fixes
+
+* style --help with a bold title and commands ([199b457](https://github.com/dfoshidero/minitcp/commit/199b4579448c97129caef8fa6da81568fe7b6ff7))
+
 ## [1.1.1](https://github.com/dfoshidero/minitcp/compare/v1.1.0...v1.1.1) (2026-08-19)
 
 
