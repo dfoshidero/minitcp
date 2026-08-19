@@ -7,9 +7,11 @@ use std::thread;
 use std::time::Duration;
 
 use crate::cli::{Command, Config, DropKind};
-use crate::interface::FrameIo;
-use crate::interface::pcap::{CaptureIo, HexReader, PcapReader, PcapWriter};
+use crate::interface::capture::CaptureIo;
+use crate::interface::hex::HexReader;
+use crate::interface::pcap::{PcapReader, PcapWriter};
 use crate::interface::tap::TapInterface;
+use crate::interface::{FrameIo, FrameSink, FrameSource, ReadOnly};
 use crate::log::{self, Verb};
 use crate::proto::arp::reply_for;
 use crate::proto::ethernet::{EthernetFrame, EthernetType};
@@ -159,12 +161,12 @@ pub fn run_bridge(cfg: Config) -> std::io::Result<()> {
 pub fn run_stack(cfg: Config) -> std::io::Result<()> {
     if let Command::Replay(path) = &cfg.command {
         let reader = PcapReader::open(path)?;
-        return run_io(cfg, reader, EofBehavior::Success);
+        return run_io(cfg, ReadOnly(reader), EofBehavior::Success);
     }
     if cfg.hex {
         return run_io(
             cfg,
-            HexReader::new(BufReader::new(io::stdin())),
+            ReadOnly(HexReader::new(BufReader::new(io::stdin()))),
             EofBehavior::Success,
         );
     }
@@ -552,7 +554,7 @@ mod tests {
         writes: Rc<RefCell<Vec<Vec<u8>>>>,
     }
 
-    impl FrameIo for MockIo {
+    impl FrameSource for MockIo {
         fn read_frame(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
             match self.reads.borrow_mut().pop_front() {
                 None => Ok(0),
@@ -562,7 +564,9 @@ mod tests {
                 }
             }
         }
+    }
 
+    impl FrameSink for MockIo {
         fn write_frame(&mut self, frame: &[u8]) -> io::Result<()> {
             self.writes.borrow_mut().push(frame.to_vec());
             Ok(())

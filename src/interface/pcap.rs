@@ -1,14 +1,13 @@
-// src/interface/pcap.rs
 // Classic libpcap file: a global header, then timestamped Ethernet frames.
 // Same format tcpdump/Wireshark write. No extra crate; we only speak little-endian
 // magic 0xa1b2c3d4 and link type 1 (Ethernet). See docs/GLOSSARY.md ("pcap").
 
 use std::fs::File;
-use std::io::{self, BufRead, Read, Write};
+use std::io::{self, Read, Write};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::FrameIo;
+use super::FrameSource;
 
 const MAGIC_LE: u32 = 0xa1b2_c3d4;
 const VERSION_MAJOR: u16 = 2;
@@ -113,7 +112,7 @@ impl PcapReader {
     }
 }
 
-impl FrameIo for PcapReader {
+impl FrameSource for PcapReader {
     fn read_frame(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
         read_record(&mut self.file, buffer).map_err(|error| {
             io::Error::new(
@@ -122,65 +121,6 @@ impl FrameIo for PcapReader {
             )
         })
     }
-
-    fn write_frame(&mut self, _frame: &[u8]) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-pub struct HexReader<R> {
-    inner: R,
-}
-
-impl<R: BufRead> HexReader<R> {
-    pub fn new(inner: R) -> Self {
-        Self { inner }
-    }
-}
-
-impl<R: BufRead> FrameIo for HexReader<R> {
-    fn read_frame(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-        let mut line = String::new();
-        loop {
-            line.clear();
-            let n = self.inner.read_line(&mut line)?;
-            if n == 0 {
-                return Ok(0);
-            }
-            let trimmed = line.trim();
-            if trimmed.is_empty() || trimmed.starts_with('#') {
-                continue;
-            }
-            let bytes = decode_hex_line(trimmed)
-                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-            if bytes.len() > buffer.len() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "hex frame larger than read buffer",
-                ));
-            }
-            buffer[..bytes.len()].copy_from_slice(&bytes);
-            return Ok(bytes.len());
-        }
-    }
-
-    fn write_frame(&mut self, _frame: &[u8]) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-pub fn decode_hex_line(line: &str) -> Result<Vec<u8>, String> {
-    let hex: String = line.chars().filter(|c| !c.is_whitespace()).collect();
-    if !hex.len().is_multiple_of(2) {
-        return Err("odd-length hex".into());
-    }
-    let mut out = Vec::with_capacity(hex.len() / 2);
-    let bytes = hex.as_bytes();
-    for i in (0..bytes.len()).step_by(2) {
-        let pair = std::str::from_utf8(&bytes[i..i + 2]).map_err(|_| "invalid hex")?;
-        out.push(u8::from_str_radix(pair, 16).map_err(|_| format!("invalid hex: {pair}"))?);
-    }
-    Ok(out)
 }
 
 pub fn pcap_info(path: &Path) -> io::Result<String> {
@@ -205,36 +145,6 @@ pub fn pcap_info(path: &Path) -> io::Result<String> {
     }
     out.push_str(&format!("{count} frames\n"));
     Ok(out)
-}
-
-pub struct CaptureIo<I> {
-    inner: I,
-    capture: Option<PcapWriter>,
-}
-
-impl<I> CaptureIo<I> {
-    pub fn new(inner: I, capture: Option<PcapWriter>) -> Self {
-        Self { inner, capture }
-    }
-}
-
-impl<I: FrameIo> FrameIo for CaptureIo<I> {
-    fn read_frame(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-        let n = self.inner.read_frame(buffer)?;
-        if n > 0
-            && let Some(w) = &mut self.capture
-        {
-            w.write_frame(&buffer[..n])?;
-        }
-        Ok(n)
-    }
-
-    fn write_frame(&mut self, frame: &[u8]) -> io::Result<()> {
-        if let Some(w) = &mut self.capture {
-            w.write_frame(frame)?;
-        }
-        self.inner.write_frame(frame)
-    }
 }
 
 fn now_stamp() -> (u32, u32) {
@@ -446,34 +356,5 @@ mod tests {
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
         assert!(error.to_string().contains("42 bytes"), "{error}");
         let _ = fs::remove_file(path);
-    }
-
-    #[test]
-    fn hex_decodes_spaced_line() {
-        let spaced = ARP_FRAME
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect::<Vec<_>>()
-            .join(" ");
-        assert_eq!(decode_hex_line(&spaced).unwrap(), ARP_FRAME);
-    }
-
-    #[test]
-    fn hex_rejects_odd_length() {
-        assert_eq!(decode_hex_line("abc").unwrap_err(), "odd-length hex");
-    }
-
-    #[test]
-    fn hex_reader_yields_one_frame() {
-        let line = ARP_FRAME
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect::<String>()
-            + "\n";
-        let mut hex = HexReader::new(std::io::Cursor::new(line));
-        let mut buf = [0u8; 2048];
-        let n = hex.read_frame(&mut buf).unwrap();
-        assert_eq!(&buf[..n], &ARP_FRAME);
-        assert_eq!(hex.read_frame(&mut buf).unwrap(), 0);
     }
 }

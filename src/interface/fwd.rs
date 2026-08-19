@@ -7,8 +7,8 @@ use std::os::unix::net::UnixStream;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use super::FrameIo;
 use super::tap::TapInterface;
+use super::{FrameSink, FrameSource};
 
 /// Where the host stack looks for the bridge.
 pub const DEFAULT_FWD: &str = "127.0.0.1:7946";
@@ -114,11 +114,13 @@ fn client_gone(e: &io::Error) -> bool {
     )
 }
 
-impl FrameIo for TcpFrames {
+impl FrameSource for TcpFrames {
     fn read_frame(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
         read_record(&mut self.stream, buffer)
     }
+}
 
+impl FrameSink for TcpFrames {
     fn write_frame(&mut self, frame: &[u8]) -> io::Result<()> {
         write_record(&mut self.stream, frame)
     }

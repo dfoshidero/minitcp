@@ -86,11 +86,13 @@ fn linux_open(tun: &Path, name: &str) -> io::Result<TapInterface> {
     Ok(TapInterface { file })
 }
 
-impl crate::interface::FrameIo for TapInterface {
+impl crate::interface::FrameSource for TapInterface {
     fn read_frame(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
         self.file.read(buffer)
     }
+}
 
+impl crate::interface::FrameSink for TapInterface {
     fn write_frame(&mut self, frame: &[u8]) -> io::Result<()> {
         self.file.write_all(frame)
     }
