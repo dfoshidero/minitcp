@@ -13,8 +13,41 @@ permissions:
   contents: read
 
 jobs:
+  classify:
+    name: classify
+    runs-on: ubuntu-latest
+    outputs:
+      checks: ${{ steps.classify.outputs.checks }}
+      release: ${{ steps.classify.outputs.release }}
+    steps:
+      - id: classify
+        env:
+          COMMIT_MSG: ${{ github.event.pull_request.title || github.event.head_commit.message }}
+        run: |
+          set -euo pipefail
+          first="$(printf '%s\n' "${COMMIT_MSG:-}" | head -n1 | tr -d '\r')"
+          type=""
+          if [[ "$first" =~ ^([A-Za-z]+)(\([^)]*\))?(!)?: ]]; then
+            type="${BASH_REMATCH[1],,}"
+          fi
+          checks=true
+          release=true
+          case "$type" in
+            docs)
+              checks=false
+              release=false
+              ;;
+            ci|refactor)
+              release=false
+              ;;
+          esac
+          echo "checks=$checks" >> "$GITHUB_OUTPUT"
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+
   test:
     name: test
+    needs: classify
+    if: needs.classify.outputs.checks == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,6 +56,8 @@ jobs:
 
   build:
     name: build
+    needs: classify
+    if: needs.classify.outputs.checks == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -38,10 +73,28 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max,ignore-error=true
 
+  status:
+    name: status
+    needs: [classify, test, build]
+    if: always() && !cancelled()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require test and build unless skipped
+        env:
+          CHECKS: ${{ needs.classify.outputs.checks }}
+          TEST: ${{ needs.test.result }}
+          BUILD: ${{ needs.build.result }}
+        run: |
+          set -euo pipefail
+          if [ "$CHECKS" != "true" ]; then
+            exit 0
+          fi
+          [ "$TEST" = success ] && [ "$BUILD" = success ]
+
   release:
     name: release
-    needs: [test, build]
-    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.test.result == 'success' && needs.build.result == 'success' }}
+    needs: [classify, test, build]
+    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.classify.outputs.release == 'true' && needs.test.result == 'success' && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write

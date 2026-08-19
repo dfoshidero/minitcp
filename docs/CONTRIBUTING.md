@@ -1,17 +1,19 @@
 # Contributing
 
-Fork the repo and open a pull request against `main`. CI (`test` and `build`) must pass. A maintainer reviews before merge.
+Fork the repo and open a pull request against `main`. A maintainer reviews before merge. The `status` check must pass (`test` and `build`, except `docs:` which skips those jobs).
 
 ## Commit messages
 
 Releases are cut from [conventional commit](https://www.conventionalcommits.org/) messages that land on `main` (the PR title, if you squash-merge):
 
-| Prefix | Effect |
-| --- | --- |
-| `fix:` | patch release |
-| `feat:` | minor release |
-| `feat!:` or `BREAKING CHANGE:` | major release |
-| `docs:`, `chore:`, `refactor:`, `test:`, `ci:` | no release |
+| Prefix | test / build | Release |
+| --- | --- | --- |
+| `fix:` | run | patch |
+| `feat:` | run | minor |
+| `feat!:` or `BREAKING CHANGE:` | run | major |
+| `ci:`, `refactor:` | run | skipped |
+| `docs:` | skipped | skipped |
+| `chore:`, `test:` | run | no publish (semantic-release no-op) |
 
 Release notes go in [CHANGELOG.md](../CHANGELOG.md) and GitHub Releases (`feat` / `fix` / breaking only). Squash-merge if you want `(#PR)` in the entry.
 
