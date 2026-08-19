@@ -17,8 +17,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
 use ratatui::{DefaultTerminal, Frame};
 
-use crate::cli::Config;
-use crate::interface::fwd::DEFAULT_FWD;
+use crate::cli::{Config, Transport};
 use crate::tapcmd::CONTAINER;
 
 const MAX_LINES: usize = 2000;
@@ -759,13 +758,20 @@ fn run_short(tx: &Sender<Msg>, program: &str, args: &[&str]) {
 impl Lab {
     fn start(mut cfg: Config) -> std::io::Result<Self> {
         let (tx, rx) = mpsc::channel();
-        let remote = cfg.use_fwd();
-        if remote && cfg.fwd.is_none() {
-            cfg.fwd = Some(DEFAULT_FWD.into());
-        }
-        if !remote {
-            ensure_tap(&cfg, &tx);
-        }
+        // Decide the transport once, here, and pin it into the config. The
+        // child `minitcp stack` inherits our flags, so if we left it to decide
+        // for itself it could reach a different answer — and then the lab would
+        // be watching one TAP while the stack talked to another.
+        let remote = match cfg.transport() {
+            Transport::Forwarded(addr) => {
+                cfg.fwd = Some(addr);
+                true
+            }
+            Transport::LocalTap => {
+                ensure_tap(&cfg, &tx);
+                false
+            }
+        };
 
         let verbose = !cfg.quiet;
         let mut stack = ChildProc::spawn_stack(&cfg, verbose)?;

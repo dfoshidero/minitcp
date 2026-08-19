@@ -3,7 +3,14 @@
 use std::io::IsTerminal;
 use std::time::{Duration, SystemTime};
 
+/// How long a *successful* check is trusted for.
 const CACHE_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
+/// How long to wait after a check that never got an answer.
+///
+/// Much shorter, because the usual cause is a laptop that was offline for a
+/// minute. Waiting a full day to find out about an update because of one
+/// failed request would be a silly thing to do to somebody.
+const RETRY_AFTER: Duration = Duration::from_secs(60 * 60);
 const REPO: &str = "dfoshidero/minitcp";
 
 pub fn nag_if_outdated() {
@@ -16,10 +23,16 @@ pub fn nag_if_outdated() {
     if recently_checked() {
         return;
     }
-    mark_checked();
+    // Record the attempt *before* making it, not after. If the network is
+    // unreachable the request costs a two-second timeout, and a user with no
+    // connection would otherwise pay that on every single command. Recording
+    // it pessimistically also means a crash or a Ctrl-C mid-request still
+    // counts as an attempt.
+    mark_checked(Outcome::Failed);
     let Some(latest) = fetch_latest() else {
         return;
     };
+    mark_checked(Outcome::Succeeded);
     let current = env!("MINITCP_RELEASE").trim_start_matches('v');
     let latest = latest.trim_start_matches('v');
     if version_newer(latest, current) {
@@ -56,30 +69,62 @@ fn cache_path() -> Option<std::path::PathBuf> {
     }
 }
 
+/// Whether the last check actually reached GitHub.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Outcome {
+    Succeeded,
+    Failed,
+}
+
+impl Outcome {
+    /// What the marker file says, and how long it silences the next check for.
+    fn marker(self) -> (&'static [u8], Duration) {
+        match self {
+            Self::Succeeded => (b"ok", CACHE_MAX_AGE),
+            Self::Failed => (b"failed", RETRY_AFTER),
+        }
+    }
+
+    fn from_marker(bytes: &[u8]) -> Self {
+        if bytes.starts_with(b"ok") {
+            Self::Succeeded
+        } else {
+            Self::Failed
+        }
+    }
+}
+
+/// Have we checked recently enough to leave it alone this time?
+///
+/// Every branch here answers "no" on any doubt — a missing cache directory, an
+/// unreadable file, a clock that has gone backwards. Checking again is free;
+/// silently never telling anyone about an update is not.
 fn recently_checked() -> bool {
     let Some(path) = cache_path() else {
         return false;
     };
-    let Ok(meta) = std::fs::metadata(path) else {
+    let Ok(contents) = std::fs::read(&path) else {
         return false;
     };
-    let Ok(modified) = meta.modified() else {
+    let Ok(modified) = std::fs::metadata(&path).and_then(|meta| meta.modified()) else {
         return false;
     };
+    let (_, max_age) = Outcome::from_marker(&contents).marker();
     SystemTime::now()
         .duration_since(modified)
-        .map(|d| d < CACHE_MAX_AGE)
+        .map(|age| age < max_age)
         .unwrap_or(false)
 }
 
-fn mark_checked() {
+fn mark_checked(outcome: Outcome) {
     let Some(path) = cache_path() else {
         return;
     };
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let _ = std::fs::write(path, b"");
+    let (marker, _) = outcome.marker();
+    let _ = std::fs::write(path, marker);
 }
 
 fn fetch_latest() -> Option<String> {
@@ -122,6 +167,35 @@ fn parse_semver(s: &str) -> (u64, u64, u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_failed_check_is_retried_much_sooner_than_a_successful_one() {
+        let (ok_marker, ok_age) = Outcome::Succeeded.marker();
+        let (failed_marker, failed_age) = Outcome::Failed.marker();
+        assert!(
+            failed_age < ok_age,
+            "a check that never reached GitHub must not silence the next one for as long"
+        );
+        // The two markers have to be distinguishable, or the outcome is lost.
+        assert_ne!(ok_marker, failed_marker);
+    }
+
+    #[test]
+    fn a_marker_round_trips_through_the_cache_file() {
+        for outcome in [Outcome::Succeeded, Outcome::Failed] {
+            let (marker, _) = outcome.marker();
+            assert!(Outcome::from_marker(marker) == outcome);
+        }
+    }
+
+    #[test]
+    fn an_unreadable_marker_is_treated_as_a_failed_check() {
+        // Old versions wrote an empty file, and a truncated write can leave
+        // anything at all. Assuming failure means we re-check sooner, which is
+        // the harmless direction to be wrong in.
+        assert!(Outcome::from_marker(b"") == Outcome::Failed);
+        assert!(Outcome::from_marker(b"\xff\xfe") == Outcome::Failed);
+    }
 
     #[test]
     fn parse_tag_from_github_json() {

@@ -60,6 +60,20 @@ impl DropKind {
     }
 }
 
+/// How Ethernet frames reach the stack.
+///
+/// Only two things can be at the other end of the stack's read loop, and which
+/// one it is changes far more than the transport: it decides where the TAP
+/// lives, and therefore which kernel can see the traffic at all.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Transport {
+    /// A TAP device on this machine, read through `/dev/net/tun`.
+    LocalTap,
+    /// Frames relayed over TCP from a bridge that owns the TAP — normally the
+    /// sidecar container, since only Linux can create a TAP at all.
+    Forwarded(String),
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Config {
     pub command: Command,
@@ -115,12 +129,27 @@ impl Config {
         !self.quiet
     }
 
-    /// Host stack talks to the TAP sidecar over TCP unless `/dev/net/tun` is here.
-    pub fn use_fwd(&self) -> bool {
-        if self.fwd.is_some() {
-            return true;
+    /// Decide how Ethernet frames will reach this stack.
+    ///
+    /// This looks at the filesystem, so it is deliberately a *decision* rather
+    /// than a getter: it is meant to be called once, early, and the answer
+    /// carried around. Calling it repeatedly invites two parts of the program
+    /// to reach different conclusions if `/dev/net/tun` appears or disappears
+    /// underneath them — which is exactly what happens when someone runs
+    /// `minitcp tap up` in another terminal.
+    pub fn transport(&self) -> Transport {
+        // An explicit --fwd is an instruction, not a hint, so it wins outright.
+        if let Some(addr) = &self.fwd {
+            return Transport::Forwarded(addr.clone());
         }
-        !self.tun.exists()
+        // Otherwise: if this kernel can give us a TAP, use it directly. If it
+        // cannot — macOS, or a container without the tun device — the only way
+        // to reach one is the sidecar.
+        if self.tun.exists() {
+            Transport::LocalTap
+        } else {
+            Transport::Forwarded(crate::interface::fwd::DEFAULT_FWD.into())
+        }
     }
 
     pub fn fwd_addr(&self) -> String {
@@ -263,5 +292,44 @@ pub(crate) fn apply_partial(base: &mut Config, over: &Partial) {
     }
     if let Some(v) = over.offline {
         base.offline = v;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_explicit_fwd_address_is_obeyed_even_when_a_tap_is_available() {
+        let mut cfg = Config::defaults();
+        cfg.fwd = Some("10.1.2.3:9999".into());
+        // A path that certainly exists, standing in for a usable /dev/net/tun.
+        cfg.tun = PathBuf::from("/");
+        assert_eq!(
+            cfg.transport(),
+            Transport::Forwarded("10.1.2.3:9999".into())
+        );
+    }
+
+    #[test]
+    fn a_usable_tun_device_means_a_local_tap() {
+        let mut cfg = Config::defaults();
+        cfg.fwd = None;
+        cfg.tun = PathBuf::from("/");
+        assert_eq!(cfg.transport(), Transport::LocalTap);
+    }
+
+    #[test]
+    fn no_tun_device_means_the_sidecar() {
+        // This is the macOS case, and the container-without-/dev/net/tun case:
+        // this kernel cannot make a TAP, so the only way to reach one is over
+        // TCP from a machine that can.
+        let mut cfg = Config::defaults();
+        cfg.fwd = None;
+        cfg.tun = PathBuf::from("/definitely/not/a/real/device");
+        assert_eq!(
+            cfg.transport(),
+            Transport::Forwarded(crate::interface::fwd::DEFAULT_FWD.into())
+        );
     }
 }
