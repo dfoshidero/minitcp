@@ -20,15 +20,6 @@ use crate::proto::ipv4::{Ipv4Packet, Protocol};
 
 use super::rng::{SeededRng, drop_pct_hit};
 
-fn protocol_name(protocol: Protocol) -> String {
-    match protocol {
-        Protocol::Icmp => "icmp".into(),
-        Protocol::Udp => "udp".into(),
-        Protocol::Tcp => "tcp".into(),
-        Protocol::Unknown(n) => format!("protocol {n}"),
-    }
-}
-
 fn icmp_quiet(message: &[u8]) -> String {
     let (id, seq) = icmp::id_seq(message).unwrap_or((0, 0));
     format!("echo id={id} seq={seq}  len={}", message.len())
@@ -169,7 +160,7 @@ pub(super) fn handle_frame(cfg: &Config, bytes: &[u8], rng: &mut SeededRng) -> O
                         &format!(
                             "ttl={} proto={} payload={}",
                             packet.ttl,
-                            protocol_name(packet.protocol),
+                            packet.protocol,
                             packet.payload.len()
                         ),
                     );

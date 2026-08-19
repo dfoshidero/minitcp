@@ -38,6 +38,19 @@ impl Protocol {
     }
 }
 
+/// How a protocol is named in a trace line: the wire name where there is one,
+/// and the raw IPv4 protocol number where there is not.
+impl std::fmt::Display for Protocol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Icmp => f.write_str("icmp"),
+            Self::Udp => f.write_str("udp"),
+            Self::Tcp => f.write_str("tcp"),
+            Self::Unknown(n) => write!(f, "protocol {n}"),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Ipv4Packet<'a> {
     pub ttl: u8,
