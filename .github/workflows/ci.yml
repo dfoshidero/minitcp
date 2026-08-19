@@ -118,9 +118,21 @@ jobs:
         with:
           extra_plugins: |
             @semantic-release/changelog
-            @semantic-release/git
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: peter-evans/create-pull-request@v7
+        if: steps.release.outputs.new_release_published == 'true'
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "docs: changelog for ${{ steps.release.outputs.new_release_version }}"
+          branch: chore/changelog-${{ steps.release.outputs.new_release_version }}
+          title: "docs: changelog for ${{ steps.release.outputs.new_release_version }}"
+          body: |
+            Updates `docs/CHANGELOG.md` for [${{ steps.release.outputs.new_release_version }}](https://github.com/${{ github.repository }}/releases/tag/v${{ steps.release.outputs.new_release_version }}).
+
+            Notes are already on the GitHub Release. Merge this PR to keep the file in the repo.
+          add-paths: docs/CHANGELOG.md
+          delete-branch: true
       - uses: docker/login-action@v3
         if: steps.release.outputs.new_release_published == 'true'
         with:

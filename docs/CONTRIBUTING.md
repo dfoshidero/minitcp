@@ -16,7 +16,7 @@ Releases are cut from [conventional commit](https://www.conventionalcommits.org/
 
 PRs build `linux/amd64` only. Pushes to `main` also build `linux/arm64` on a native ARM runner. A published release still pushes both architectures.
 
-Release notes go in [CHANGELOG.md](CHANGELOG.md) and GitHub Releases (`feat` / `fix` / breaking only). Squash-merge if you want `(#PR)` in the entry.
+Release notes go on GitHub Releases (`feat` / `fix` / breaking only). After a release, CI opens a `docs:` PR that only updates [CHANGELOG.md](CHANGELOG.md); merge that PR to keep the file in sync. Squash-merge feature PRs if you want `(#PR)` in the entry.
 
 ## Development
 
