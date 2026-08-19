@@ -96,7 +96,7 @@ pub(crate) fn parse_cli(args: &[String]) -> Result<Partial, ParseError> {
                 })?;
                 set_command(&mut partial, Command::Replay(PathBuf::from(file)))?;
             }
-            "pcap" | "pcap-info" => {
+            "pcap" => {
                 family = Family::Pcap;
                 match peek(args, i) {
                     None => {

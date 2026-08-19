@@ -73,7 +73,7 @@ pub(crate) fn flag_usage(flag: &str) -> String {
         // These are families and multi-line blocks, not single flags.
         "tap" => return USAGE_TAP.into(),
         "identity" => return USAGE_IDENTITY.into(),
-        "pcap" | "pcap-info" => return USAGE_PCAP.into(),
+        "pcap" => return USAGE_PCAP.into(),
         "replay" => return USAGE_REPLAY.into(),
         "--config" => return USAGE_CONFIG.into(),
         _ => {}

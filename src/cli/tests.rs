@@ -257,8 +257,6 @@ fn flags_the_command_never_reads_are_warned_about() {
 fn pcap_and_replay_parse() {
     let cfg = parse_ok(&["pcap", "out.pcap"]);
     assert_eq!(cfg.command, Command::Pcap(PathBuf::from("out.pcap")));
-    let alias = parse_ok(&["pcap-info", "out.pcap"]);
-    assert_eq!(alias.command, Command::Pcap(PathBuf::from("out.pcap")));
     let err = parse_err(&["pcap"]);
     assert!(err.contains("usage: minitcp pcap FILE"), "{err}");
     assert!(!err.contains("needs a value"), "{err}");
