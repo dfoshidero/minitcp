@@ -22,7 +22,7 @@ docker run --rm -it \
 
 That pulls the image on first use and opens the terminal lab. Pass the same flags the binary already has, for example `stack -q` at the end of the command.
 
-TAP is a Linux kernel device. On macOS or Windows, Docker Desktop runs the lab inside a Linux VM; you do not install a native binary.
+The image is `linux/amd64` and `linux/arm64` (Intel/AMD Linux, and Apple Silicon via Docker Desktop). TAP is a Linux kernel device, so on macOS or Windows the lab runs in Docker’s Linux VM.
 
 On Linux with Rust, `ip`, `ping`, `tcpdump`, `/dev/net/tun`, and permission to create TAP interfaces, you can instead:
 
