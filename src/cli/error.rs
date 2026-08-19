@@ -42,18 +42,6 @@ impl std::fmt::Display for ParseError {
     }
 }
 
-impl From<String> for ParseError {
-    fn from(message: String) -> Self {
-        Self::msg(message)
-    }
-}
-
-impl From<&str> for ParseError {
-    fn from(message: &str) -> Self {
-        Self::msg(message)
-    }
-}
-
 pub(crate) fn missing_value(flag: &str) -> ParseError {
     ParseError::with_usage(format!("{flag} needs a value"), flag_usage(flag))
 }

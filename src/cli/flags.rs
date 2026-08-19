@@ -228,7 +228,7 @@ pub(super) fn apply_flag(
         "--listen" => partial.listen = Some(need()?.to_string()),
         "--iface" => partial.iface = Some(need()?.to_string()),
         "--addr" => partial.addr = Some(parse_ipv4(need()?)?),
-        "--mac" => partial.mac = Some(parse_mac(need()?).map_err(ParseError::msg)?),
+        "--mac" => partial.mac = Some(parse_mac(need()?)?),
         "--linux-addr" => partial.linux_addr = Some(parse_ipv4(need()?)?),
         "--tun" => partial.tun = Some(PathBuf::from(need()?)),
         "--write" => partial.write = Some(PathBuf::from(need()?)),
@@ -278,23 +278,24 @@ pub(super) fn parse_count(s: &str) -> Result<u64, ParseError> {
         .map_err(|_| ParseError::msg(format!("invalid number: {s}")))
 }
 
-pub fn parse_mac(s: &str) -> Result<MacAddress, String> {
+pub fn parse_mac(s: &str) -> Result<MacAddress, ParseError> {
     let sep = if s.contains(':') {
         ':'
     } else if s.contains('-') {
         '-'
     } else {
-        return Err(format!("invalid MAC: {s}"));
+        return Err(ParseError::msg(format!("invalid MAC: {s}")));
     };
     let parts: Vec<&str> = s.split(sep).collect();
     if parts.len() != 6 {
-        return Err(format!("invalid MAC: {s}"));
+        return Err(ParseError::msg(format!("invalid MAC: {s}")));
     }
     let mut bytes = [0u8; 6];
     for (i, part) in parts.iter().enumerate() {
-        bytes[i] = u8::from_str_radix(part, 16).map_err(|_| format!("invalid MAC: {s}"))?;
+        bytes[i] = u8::from_str_radix(part, 16)
+            .map_err(|_| ParseError::msg(format!("invalid MAC: {s}")))?;
         if part.len() != 2 {
-            return Err(format!("invalid MAC: {s}"));
+            return Err(ParseError::msg(format!("invalid MAC: {s}")));
         }
     }
     Ok(MacAddress(bytes))

@@ -193,10 +193,7 @@ fn parse_identity(args: &[String], i: &mut usize, partial: &mut Partial) -> Resu
             *i += 1;
             let mac = take_value(args, i, "identity mac")
                 .map_err(|_| ParseError::with_usage("identity mac needs a MAC", USAGE_IDENTITY))?;
-            set_command(
-                partial,
-                Command::IdentitySetMac(parse_mac(mac).map_err(ParseError::msg)?),
-            )
+            set_command(partial, Command::IdentitySetMac(parse_mac(mac)?))
         }
         Some(other) => {
             *i += 1;
