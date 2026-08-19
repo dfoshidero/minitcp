@@ -1,7 +1,7 @@
 // Length-prefixed Ethernet frames over TCP (TAP sidecar <-> host stack).
 
 use std::io::{self, Read, Write};
-use std::net::{Shutdown, TcpListener, TcpStream};
+use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
 use std::thread;
@@ -15,6 +15,8 @@ pub const DEFAULT_LISTEN: &str = "0.0.0.0:7946";
 
 const CONNECT_RETRY: Duration = Duration::from_secs(8);
 const CONNECT_INTERVAL: Duration = Duration::from_millis(200);
+const CONNECT_ATTEMPT_TIMEOUT: Duration = Duration::from_millis(250);
+const MAX_FRAME: usize = 65_535;
 
 pub struct TcpFrames {
     stream: TcpStream,
@@ -30,9 +32,12 @@ impl TcpFrames {
         timeout: Duration,
         interval: Duration,
     ) -> io::Result<Self> {
+        let addresses = resolve(addr)?;
         let deadline = Instant::now() + timeout;
         loop {
-            match TcpStream::connect(addr) {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let attempt_timeout = CONNECT_ATTEMPT_TIMEOUT.min(remaining);
+            match connect_addresses(&addresses, attempt_timeout) {
                 Ok(stream) => {
                     stream.set_nodelay(true)?;
                     return Ok(Self { stream });
@@ -45,6 +50,34 @@ impl TcpFrames {
             }
         }
     }
+}
+
+pub fn probe(addr: &str, timeout: Duration) -> io::Result<()> {
+    let addresses = resolve(addr)?;
+    connect_addresses(&addresses, timeout).map(drop)
+}
+
+fn resolve(addr: &str) -> io::Result<Vec<SocketAddr>> {
+    let addresses: Vec<_> = addr.to_socket_addrs()?.collect();
+    if addresses.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{addr} did not resolve to an address"),
+        ));
+    }
+    Ok(addresses)
+}
+
+fn connect_addresses(addresses: &[SocketAddr], timeout: Duration) -> io::Result<TcpStream> {
+    let mut last_error = None;
+    for address in addresses {
+        match TcpStream::connect_timeout(address, timeout.max(Duration::from_millis(1))) {
+            Ok(stream) => return Ok(stream),
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(last_error
+        .unwrap_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "no address to connect to")))
 }
 
 fn retryable(e: &io::Error) -> bool {
@@ -82,27 +115,43 @@ impl FrameIo for TcpFrames {
 
 fn read_record(stream: &mut TcpStream, buffer: &mut [u8]) -> io::Result<usize> {
     let mut len_buf = [0u8; 4];
-    match stream.read_exact(&mut len_buf) {
-        Ok(()) => {}
-        Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(0),
-        Err(e) => return Err(e),
+    if stream.read(&mut len_buf[..1])? == 0 {
+        return Ok(0);
     }
+    stream.read_exact(&mut len_buf[1..])?;
     let n = u32::from_be_bytes(len_buf) as usize;
     if n == 0 {
         return Ok(0);
     }
+    if n > MAX_FRAME {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("forwarded frame is {n} bytes; maximum is {MAX_FRAME}"),
+        ));
+    }
     if n > buffer.len() {
-        let mut skip = vec![0u8; n];
-        stream.read_exact(&mut skip)?;
-        let keep = buffer.len();
-        buffer.copy_from_slice(&skip[..keep]);
-        return Ok(keep);
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "forwarded frame is {n} bytes but the receive buffer holds {}",
+                buffer.len()
+            ),
+        ));
     }
     stream.read_exact(&mut buffer[..n])?;
     Ok(n)
 }
 
 fn write_record(stream: &mut impl Write, frame: &[u8]) -> io::Result<()> {
+    if frame.len() > MAX_FRAME {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "cannot forward {}-byte frame; maximum is {MAX_FRAME}",
+                frame.len()
+            ),
+        ));
+    }
     stream.write_all(&(frame.len() as u32).to_be_bytes())?;
     stream.write_all(frame)?;
     stream.flush()
@@ -110,20 +159,20 @@ fn write_record(stream: &mut impl Write, frame: &[u8]) -> io::Result<()> {
 
 pub fn run_bridge(listen: &str, tap: TapInterface) -> io::Result<()> {
     let listener = TcpListener::bind(listen)?;
-    eprintln!("bridge listening on {listen}");
+    crate::log::status::info(format!("bridge listening on {listen}"));
     accept_loop(listener, tap)
 }
 
 fn accept_loop(listener: TcpListener, tap: TapInterface) -> io::Result<()> {
     loop {
         let (stream, peer) = listener.accept()?;
-        eprintln!("bridge client {peer}");
+        crate::log::status::info(format!("bridge client {peer}"));
         stream.set_nodelay(true)?;
         let session = tap.try_clone()?;
         match pump(session, stream) {
             Ok(()) => {}
             Err(e) if client_gone(&e) => {
-                eprintln!("bridge client {peer} closed");
+                crate::log::status::info(format!("bridge client {peer} closed"));
             }
             Err(e) => return Err(e),
         }
@@ -268,6 +317,39 @@ mod tests {
         let client = handle.join().unwrap().expect("connect should succeed");
         drop(peer);
         drop(client);
+    }
+
+    #[test]
+    fn oversized_length_prefix_is_rejected_without_allocating() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let writer = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .write_all(&((MAX_FRAME as u32) + 1).to_be_bytes())
+                .unwrap();
+        });
+
+        let mut stream = TcpStream::connect(addr).unwrap();
+        let error = read_record(&mut stream, &mut [0u8; 2048]).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("maximum"), "{error}");
+        writer.join().unwrap();
+    }
+
+    #[test]
+    fn partial_length_prefix_is_reported_as_corrupt_not_clean_eof() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let writer = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream.write_all(&[0, 1]).unwrap();
+        });
+
+        let mut stream = TcpStream::connect(addr).unwrap();
+        let error = read_record(&mut stream, &mut [0u8; 2048]).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof);
+        writer.join().unwrap();
     }
 
     #[test]

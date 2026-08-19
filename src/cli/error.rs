@@ -205,9 +205,12 @@ pub fn usage() -> String {
 	{drop}            ignore that kind of frame
 	{fwd}               talk to the TAP sidecar over TCP
 	{offline}                     don't check GitHub for a newer minitcp
+	{version}                 print the packaged minitcp version
 
 Same knobs can live in minitcp.toml in this directory, or --config FILE.
 Command line wins over the file. identity / tap setters write that file.
+
+Exit status: 0 success, 1 runtime failure, 2 command-line usage error.
 
 	# minitcp.toml
 	iface = \"tap1\"
@@ -237,6 +240,7 @@ Command line wins over the file. identity / tap setters write that file.
         drop = cmd("--drop arp|icmp|ip"),
         fwd = cmd("--fwd HOST:PORT"),
         offline = cmd("--offline"),
+        version = cmd("--version, -V"),
     )
 }
 
@@ -257,6 +261,8 @@ mod tests {
         assert!(text.contains("--quiet"));
         assert!(text.contains("-q"));
         assert!(text.contains("--drop"));
+        assert!(text.contains("--version"));
+        assert!(text.contains("Exit status: 0 success"));
         assert!(text.contains("--config FILE"));
         assert!(text.contains("minitcp.toml"));
         assert!(!text.contains("minitcp bridge"));

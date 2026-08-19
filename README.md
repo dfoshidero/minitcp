@@ -154,9 +154,12 @@ minitcp stack --write out.pcap
 minitcp replay out.pcap -q
 minitcp pcap out.pcap
 minitcp stack --drop icmp -c 5
+minitcp --version
 ```
 
 Same knobs can live in `minitcp.toml` in the working directory, or `--config FILE`. Command line wins over the file.
+
+Exit status is `0` for success, `1` for a runtime failure, and `2` for a command-line usage error.
 
 ```toml
 iface = "tap1"

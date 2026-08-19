@@ -250,6 +250,12 @@ fn fwd_and_offline_parse() {
 }
 
 #[test]
+fn version_flag_does_not_require_config() {
+    assert_eq!(parse_ok(&["--version"]).command, Command::Version);
+    assert_eq!(parse_ok(&["-V"]).command, Command::Version);
+}
+
+#[test]
 fn force_tap_and_no_create_are_gone() {
     let err = parse_err(&["--tap"]);
     assert!(err.contains("unknown flag '--tap'"), "{err}");

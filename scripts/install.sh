@@ -15,7 +15,8 @@ case "$os-$arch" in
   Linux-aarch64) asset="minitcp-aarch64-unknown-linux-gnu" ;;
   Linux-arm64) asset="minitcp-aarch64-unknown-linux-gnu" ;;
   *)
-    echo "unsupported platform: $os $arch" >&2
+    echo "minitcp: error: no published binary for $os $arch" >&2
+    echo "minitcp: supported platforms: macOS arm64; Linux x86_64 and arm64" >&2
     exit 1
     ;;
 esac
@@ -26,20 +27,29 @@ else
   url="https://github.com/${REPO}/releases/download/v${VERSION#v}/${asset}"
 fi
 
-mkdir -p "$DEST_DIR"
-tmp=$(mktemp)
+if ! mkdir -p "$DEST_DIR"; then
+  echo "minitcp: error: cannot create install directory $DEST_DIR" >&2
+  exit 1
+fi
+tmp=$(mktemp "$DEST_DIR/.minitcp.XXXXXX")
 trap 'rm -f "$tmp"' EXIT
-echo "downloading $url"
-curl -fsSL "$url" -o "$tmp"
+echo "minitcp: downloading $url"
+if ! curl -fsSL --retry 3 --retry-delay 1 --connect-timeout 10 --max-time 120 "$url" -o "$tmp"; then
+  echo "minitcp: error: download failed after retries: $url" >&2
+  exit 1
+fi
 chmod +x "$tmp"
+if ! "$tmp" --version >/dev/null 2>&1; then
+  echo "minitcp: error: downloaded binary will not run on this machine" >&2
+  exit 1
+fi
 mv "$tmp" "$DEST_DIR/minitcp"
 trap - EXIT
 
-echo "installed $DEST_DIR/minitcp"
+echo "minitcp: installed $DEST_DIR/minitcp"
 case ":$PATH:" in
   *":$DEST_DIR:"*) ;;
   *)
-    echo "add this to your shell rc:  export PATH=\"$DEST_DIR:\$PATH\""
+    echo "minitcp: add this to your shell rc:  export PATH=\"$DEST_DIR:\$PATH\""
     ;;
 esac
-"$DEST_DIR/minitcp" --help

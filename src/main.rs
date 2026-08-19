@@ -3,6 +3,7 @@
 mod cli;
 mod interface;
 mod log;
+mod process;
 mod proto;
 mod stack;
 mod tapcmd;
@@ -11,15 +12,43 @@ mod update;
 
 use cli::{Command, HelpTopic};
 
-fn main() -> std::io::Result<()> {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let cfg = match cli::parse(&args) {
-        Ok(cfg) => cfg,
-        Err(err) => {
-            eprint!("{err}");
-            std::process::exit(2);
+enum AppError {
+    Usage(cli::ParseError),
+    Config(cli::ParseError),
+    Runtime(std::io::Error),
+}
+
+impl From<std::io::Error> for AppError {
+    fn from(error: std::io::Error) -> Self {
+        Self::Runtime(error)
+    }
+}
+
+fn main() {
+    let code = match run() {
+        Ok(()) => 0,
+        Err(AppError::Usage(error)) => {
+            let _ = log::write_stderr(&error.to_string());
+            2
+        }
+        Err(AppError::Config(error)) => {
+            let _ = log::write_stderr(&error.to_string());
+            1
+        }
+        Err(AppError::Runtime(error)) if error.kind() == std::io::ErrorKind::BrokenPipe => 0,
+        Err(AppError::Runtime(error)) => {
+            log::status::error(error.to_string());
+            1
         }
     };
+    if code != 0 {
+        std::process::exit(code);
+    }
+}
+
+fn run() -> Result<(), AppError> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let cfg = cli::parse(&args).map_err(AppError::Usage)?;
 
     let skip_nag = cfg.offline
         || !matches!(
@@ -31,29 +60,30 @@ fn main() -> std::io::Result<()> {
     }
 
     match cfg.command {
-        Command::Help(topic) => {
-            eprint!("{}", cli::usage_topic(topic));
-            Ok(())
+        Command::Help(topic) => log::write_stderr(&cli::usage_topic(topic)).map_err(Into::into),
+        Command::Version => {
+            log::write_stdout(&format!("minitcp {}\n", env!("MINITCP_RELEASE"))).map_err(Into::into)
         }
-        Command::Run => tui::run_lab(cfg),
-        Command::Stack | Command::Replay(_) => stack::run_stack(cfg),
+        Command::Run => tui::run_lab(cfg).map_err(Into::into),
+        Command::Stack | Command::Replay(_) => stack::run_stack(cfg).map_err(Into::into),
         Command::Pcap(path) => {
-            print!("{}", crate::interface::pcap::pcap_info(&path)?);
+            let output = crate::interface::pcap::pcap_info(&path)?;
+            log::write_stdout(&output)?;
             Ok(())
         }
-        Command::Bridge => stack::run_bridge(cfg),
-        Command::TapUp => tapcmd::tap_up(&cfg),
-        Command::TapDown => tapcmd::tap_down(&cfg),
+        Command::Bridge => stack::run_bridge(cfg).map_err(Into::into),
+        Command::TapUp => tapcmd::tap_up(&cfg).map_err(Into::into),
+        Command::TapDown => tapcmd::tap_down(&cfg).map_err(Into::into),
         Command::TapShow => {
-            eprint!("{}", tap_status(&cfg));
-            eprint!("{}", cli::usage_topic(HelpTopic::Tap));
-            std::process::exit(2);
+            log::write_stderr(&tap_status(&cfg))?;
+            log::write_stderr(&cli::usage_topic(HelpTopic::Tap))?;
+            Ok(())
         }
         Command::TapSetIface(ref name) => write_key(&cfg, "iface", name),
         Command::TapSetAddr(ip) => write_key(&cfg, "linux-addr", &ip.to_string()),
         Command::TapSetTun(ref path) => write_key(&cfg, "tun", &path.display().to_string()),
         Command::IdentityShow => {
-            print!("{}", identity_status(&cfg));
+            log::write_stdout(&identity_status(&cfg))?;
             Ok(())
         }
         Command::IdentitySetAddr(ip) => write_key(&cfg, "addr", &ip.to_string()),
@@ -79,8 +109,11 @@ fn identity_status(cfg: &cli::Config) -> String {
     )
 }
 
-fn write_key(cfg: &cli::Config, key: &str, value: &str) -> std::io::Result<()> {
-    cli::write_config_key(cfg, key, value).map_err(|e| std::io::Error::other(e.to_string()))?;
-    eprintln!("wrote {key} = {value}  ({})", cfg.config_path.display());
+fn write_key(cfg: &cli::Config, key: &str, value: &str) -> Result<(), AppError> {
+    cli::write_config_key(cfg, key, value).map_err(AppError::Config)?;
+    log::status::ok(format!(
+        "wrote {key} = {value}  ({})",
+        cfg.config_path.display()
+    ));
     Ok(())
 }

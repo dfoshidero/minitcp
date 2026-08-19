@@ -5,7 +5,12 @@
 //   23:12:05  [IN]   ethernet  L2  02:00:… -> 02:00:…  ethertype 0x0800
 // IPv4/ARP [..] keep src -> dst. ICMP/TCP/UDP sit under IPv4 (they are its payload).
 
-use std::io::Write;
+use std::io::{self, IsTerminal, Write};
+use std::sync::Mutex;
+
+use crossterm::style::Stylize;
+
+static OUTPUT_ERROR: Mutex<Option<io::Error>> = Mutex::new(None);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Verb {
@@ -57,8 +62,7 @@ impl<'a> Event<'a> {
     }
 
     pub fn emit_at(&self, when: &str) {
-        println!("{}", self.format_with(when));
-        let _ = std::io::stdout().flush();
+        emit_protocol_line(&self.format_with(when));
     }
 }
 
@@ -72,8 +76,7 @@ pub fn format_quiet(when: &str, layer: &str, address: &str, reason: &str) -> Str
 }
 
 pub fn emit_quiet(when: &str, layer: &str, address: &str, reason: &str) {
-    println!("{}", format_quiet(when, layer, address, reason));
-    let _ = std::io::stdout().flush();
+    emit_protocol_line(&format_quiet(when, layer, address, reason));
 }
 
 pub fn emit_at(when: &str, verb: Verb, layer: &str, osi: &str, address: &str, reason: &str) {
@@ -112,6 +115,112 @@ pub fn emit_inside(when: &str, verb: Verb, layer: &str, osi: &str, reason: &str)
         reason,
     }
     .emit_at(when);
+}
+
+fn write_line(writer: &mut impl Write, line: &str) -> io::Result<()> {
+    writer.write_all(line.as_bytes())?;
+    writer.write_all(b"\n")?;
+    writer.flush()
+}
+
+fn emit_protocol_line(line: &str) {
+    let stdout = io::stdout();
+    if let Err(error) = write_line(&mut stdout.lock(), line)
+        && let Ok(mut stored) = OUTPUT_ERROR.lock()
+        && stored.is_none()
+    {
+        *stored = Some(error);
+    }
+}
+
+pub fn take_output_error() -> Option<io::Error> {
+    OUTPUT_ERROR.lock().ok()?.take()
+}
+
+pub fn write_stdout(text: &str) -> io::Result<()> {
+    let stdout = io::stdout();
+    let mut stdout = stdout.lock();
+    stdout.write_all(text.as_bytes())?;
+    stdout.flush()
+}
+
+pub fn write_stderr(text: &str) -> io::Result<()> {
+    let stderr = io::stderr();
+    let mut stderr = stderr.lock();
+    stderr.write_all(text.as_bytes())?;
+    stderr.flush()
+}
+
+pub mod status {
+    use super::*;
+
+    #[derive(Clone, Copy)]
+    enum Level {
+        Info,
+        Ok,
+        Warn,
+        Error,
+    }
+
+    fn format_line(level: Level, message: &str) -> String {
+        match level {
+            Level::Info | Level::Ok => format!("minitcp: {message}"),
+            Level::Warn => format!("minitcp: warning: {message}"),
+            Level::Error => format!("minitcp: error: {message}"),
+        }
+    }
+
+    fn emit(level: Level, message: &str) {
+        let line = format_line(level, message);
+        let stderr = io::stderr();
+        let color = stderr.is_terminal();
+        let rendered = if color {
+            match level {
+                Level::Info => line,
+                Level::Ok => line.green().to_string(),
+                Level::Warn => line.yellow().to_string(),
+                Level::Error => line.red().to_string(),
+            }
+        } else {
+            line
+        };
+        let _ = write_line(&mut stderr.lock(), &rendered);
+    }
+
+    pub fn info(message: impl AsRef<str>) {
+        emit(Level::Info, message.as_ref());
+    }
+
+    pub fn ok(message: impl AsRef<str>) {
+        emit(Level::Ok, message.as_ref());
+    }
+
+    pub fn warn(message: impl AsRef<str>) {
+        emit(Level::Warn, message.as_ref());
+    }
+
+    pub fn error(message: impl AsRef<str>) {
+        emit(Level::Error, message.as_ref());
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn status_lines_have_stable_plain_prefixes() {
+            assert_eq!(format_line(Level::Info, "ready"), "minitcp: ready");
+            assert_eq!(format_line(Level::Ok, "ready"), "minitcp: ready");
+            assert_eq!(
+                format_line(Level::Warn, "retrying"),
+                "minitcp: warning: retrying"
+            );
+            assert_eq!(
+                format_line(Level::Error, "failed"),
+                "minitcp: error: failed"
+            );
+        }
+    }
 }
 
 fn timestamp() -> String {
@@ -193,5 +302,16 @@ mod tests {
             line,
             "          [..]    └── icmp  L3  type=8 code=0 id=1 seq=1  len=64"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn writing_to_closed_pipe_returns_broken_pipe() {
+        use std::os::unix::net::UnixStream;
+
+        let (mut writer, reader) = UnixStream::pair().unwrap();
+        drop(reader);
+        let error = write_line(&mut writer, "protocol line").unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
     }
 }

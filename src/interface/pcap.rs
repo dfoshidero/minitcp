@@ -18,11 +18,17 @@ const LINKTYPE_ETHERNET: u32 = 1;
 
 pub struct PcapWriter {
     file: File,
+    path: std::path::PathBuf,
 }
 
 impl PcapWriter {
     pub fn create(path: &Path) -> io::Result<Self> {
-        let mut file = File::create(path)?;
+        let mut file = File::create(path).map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!("cannot create pcap {}: {error}", path.display()),
+            )
+        })?;
         write_u32(&mut file, MAGIC_LE)?;
         write_u16(&mut file, VERSION_MAJOR)?;
         write_u16(&mut file, VERSION_MINOR)?;
@@ -30,57 +36,91 @@ impl PcapWriter {
         write_u32(&mut file, 0)?; // sigfigs
         write_u32(&mut file, SNAPLEN)?;
         write_u32(&mut file, LINKTYPE_ETHERNET)?;
-        Ok(Self { file })
+        Ok(Self {
+            file,
+            path: path.to_path_buf(),
+        })
     }
 
     pub fn write_frame(&mut self, frame: &[u8]) -> io::Result<()> {
         let (sec, usec) = now_stamp();
         let len = frame.len() as u32;
-        write_u32(&mut self.file, sec)?;
-        write_u32(&mut self.file, usec)?;
-        write_u32(&mut self.file, len)?;
-        write_u32(&mut self.file, len)?;
-        self.file.write_all(frame)
+        let result = (|| {
+            write_u32(&mut self.file, sec)?;
+            write_u32(&mut self.file, usec)?;
+            write_u32(&mut self.file, len)?;
+            write_u32(&mut self.file, len)?;
+            self.file.write_all(frame)
+        })();
+        result.map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!("cannot write pcap {}: {error}", self.path.display()),
+            )
+        })
     }
 }
 
 pub struct PcapReader {
     file: File,
+    path: std::path::PathBuf,
 }
 
 impl PcapReader {
     pub fn open(path: &Path) -> io::Result<Self> {
-        let mut file = File::open(path)?;
-        let magic = read_u32(&mut file)?;
+        let mut file = File::open(path).map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!("cannot open pcap {}: {error}", path.display()),
+            )
+        })?;
+        let magic = read_u32(&mut file).map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!("cannot read pcap header from {}: {error}", path.display()),
+            )
+        })?;
         if magic != MAGIC_LE {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "unsupported pcap magic (want classic little-endian 0xa1b2c3d4)",
             ));
         }
-        let _major = read_u16(&mut file)?;
-        let _minor = read_u16(&mut file)?;
-        let _zone = read_u32(&mut file)?;
-        let _sigfigs = read_u32(&mut file)?;
-        let _snaplen = read_u32(&mut file)?;
-        let network = read_u32(&mut file)?;
+        let network = (|| {
+            let _major = read_u16(&mut file)?;
+            let _minor = read_u16(&mut file)?;
+            let _zone = read_u32(&mut file)?;
+            let _sigfigs = read_u32(&mut file)?;
+            let _snaplen = read_u32(&mut file)?;
+            read_u32(&mut file)
+        })()
+        .map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!("cannot read pcap header from {}: {error}", path.display()),
+            )
+        })?;
         if network != LINKTYPE_ETHERNET {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("pcap link type {network} is not Ethernet (1)"),
             ));
         }
-        Ok(Self { file })
+        Ok(Self {
+            file,
+            path: path.to_path_buf(),
+        })
     }
 }
 
 impl FrameIo for PcapReader {
     fn read_frame(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-        match read_record(&mut self.file, buffer) {
-            Ok(n) => Ok(n),
-            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => Ok(0),
-            Err(e) => Err(e),
-        }
+        read_record(&mut self.file, buffer).map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!("cannot read pcap {}: {error}", self.path.display()),
+            )
+        })
     }
 
     fn write_frame(&mut self, _frame: &[u8]) -> io::Result<()> {
@@ -131,7 +171,7 @@ impl<R: BufRead> FrameIo for HexReader<R> {
 
 pub fn decode_hex_line(line: &str) -> Result<Vec<u8>, String> {
     let hex: String = line.chars().filter(|c| !c.is_whitespace()).collect();
-    if hex.len() % 2 != 0 {
+    if !hex.len().is_multiple_of(2) {
         return Err("odd-length hex".into());
     }
     let mut out = Vec::with_capacity(hex.len() / 2);
@@ -181,10 +221,10 @@ impl<I> CaptureIo<I> {
 impl<I: FrameIo> FrameIo for CaptureIo<I> {
     fn read_frame(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
         let n = self.inner.read_frame(buffer)?;
-        if n > 0 {
-            if let Some(w) = &mut self.capture {
-                w.write_frame(&buffer[..n])?;
-            }
+        if n > 0
+            && let Some(w) = &mut self.capture
+        {
+            w.write_frame(&buffer[..n])?;
         }
         Ok(n)
     }
@@ -225,16 +265,26 @@ fn read_u32(r: &mut impl Read) -> io::Result<u32> {
 }
 
 fn read_record(file: &mut File, buffer: &mut [u8]) -> io::Result<usize> {
-    let _sec = read_u32(file)?;
-    let _usec = read_u32(file)?;
-    let incl = read_u32(file)? as usize;
-    let _orig = read_u32(file)?;
+    let mut header = [0u8; 16];
+    if file.read(&mut header[..1])? == 0 {
+        return Ok(0);
+    }
+    file.read_exact(&mut header[1..])?;
+    let incl = u32::from_le_bytes([header[8], header[9], header[10], header[11]]) as usize;
+    if incl > SNAPLEN as usize {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("pcap frame is {incl} bytes; maximum is {SNAPLEN}"),
+        ));
+    }
     if incl > buffer.len() {
-        let mut skip = vec![0u8; incl];
-        file.read_exact(&mut skip)?;
-        let n = buffer.len();
-        buffer.copy_from_slice(&skip[..n]);
-        return Ok(n);
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "pcap frame is {incl} bytes but the receive buffer holds {}",
+                buffer.len()
+            ),
+        ));
     }
     file.read_exact(&mut buffer[..incl])?;
     Ok(incl)
@@ -285,6 +335,23 @@ mod tests {
         let text = pcap_info(&path).unwrap();
         assert!(text.contains("ethertype 0x0806"), "{text}");
         assert!(text.contains("1 frames"), "{text}");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn partial_record_is_reported_as_corrupt_not_clean_eof() {
+        let path = unique_pcap();
+        {
+            let _writer = PcapWriter::create(&path).unwrap();
+        }
+        {
+            let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+            file.write_all(&[1, 2, 3]).unwrap();
+        }
+        let mut reader = PcapReader::open(&path).unwrap();
+        let error = reader.read_frame(&mut [0u8; 2048]).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof);
+        assert!(error.to_string().contains("cannot read pcap"), "{error}");
         let _ = fs::remove_file(path);
     }
 

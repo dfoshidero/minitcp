@@ -23,6 +23,7 @@ pub enum HelpTopic {
 pub enum Command {
     Run,
     Stack,
+    Version,
     Replay(PathBuf),
     Pcap(PathBuf),
     Help(HelpTopic),

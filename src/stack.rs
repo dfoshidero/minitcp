@@ -3,6 +3,8 @@
 use std::io::{self, BufReader};
 use std::net::Ipv4Addr;
 use std::path::Path;
+use std::thread;
+use std::time::Duration;
 
 use crate::cli::{Command, Config, DropKind};
 use crate::interface::FrameIo;
@@ -39,10 +41,9 @@ fn icmp_quiet(message: &[u8]) -> String {
 }
 
 fn icmp_decode(message: &[u8]) -> String {
-    if message.len() < 8 {
+    let Some((id, seq)) = icmp_id_seq(message) else {
         return "truncated".into();
-    }
-    let (id, seq) = icmp_id_seq(message).unwrap();
+    };
     format!(
         "type={} code={} id={id} seq={seq}  len={}",
         message[0],
@@ -102,69 +103,100 @@ pub fn drop_pct_hit(pct: u8, rng: &mut SeededRng) -> bool {
     (rng.next_u32() % 100) < u32::from(pct)
 }
 
-fn open_tap(cfg: &Config) -> TapInterface {
+fn open_tap(cfg: &Config) -> io::Result<TapInterface> {
     if !cfg.tun.exists() {
-        eprintln!(
-            "cannot open {}. Reopen this folder in the Dev Container.",
-            cfg.tun.display()
-        );
-        std::process::exit(1);
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!(
+                "cannot open {}; reopen this folder in the Dev Container",
+                cfg.tun.display()
+            ),
+        ));
     }
 
     let sys = format!("/sys/class/net/{}", cfg.iface);
     if !Path::new(&sys).exists() {
-        eprintln!("{} is not up yet. Create it first:", cfg.iface);
-        eprintln!("  minitcp tap up");
-        std::process::exit(1);
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("{} is not up yet; try `minitcp tap up`", cfg.iface),
+        ));
     }
 
-    match TapInterface::open_at(&cfg.tun, &cfg.iface) {
-        Ok(tap) => tap,
-        Err(e) => {
-            eprintln!("cannot attach to {}: {e}", cfg.iface);
-            eprintln!("Try:  minitcp tap up");
-            std::process::exit(1);
+    const ATTEMPTS: usize = 5;
+    for attempt in 1..=ATTEMPTS {
+        match TapInterface::open_at(&cfg.tun, &cfg.iface) {
+            Ok(tap) => return Ok(tap),
+            Err(error) if attempt < ATTEMPTS && retryable_tap_attach(&error) => {
+                thread::sleep(Duration::from_millis(100));
+            }
+            Err(error) => {
+                return Err(io::Error::new(
+                    error.kind(),
+                    format!(
+                        "cannot attach to {}; try `minitcp tap up`: {error}",
+                        cfg.iface
+                    ),
+                ));
+            }
         }
     }
+    Err(io::Error::other("TAP attach retry loop ended unexpectedly"))
+}
+
+fn retryable_tap_attach(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::NotFound | io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+    ) || matches!(error.raw_os_error(), Some(libc::ENODEV) | Some(libc::EBUSY))
 }
 
 pub fn run_bridge(cfg: Config) -> std::io::Result<()> {
     crate::interface::tap::ensure_iface(&cfg.iface, cfg.linux_addr)?;
-    let tap = open_tap(&cfg);
+    let tap = open_tap(&cfg)?;
     crate::interface::fwd::run_bridge(&cfg.listen, tap)
 }
 
 pub fn run_stack(cfg: Config) -> std::io::Result<()> {
     if let Command::Replay(path) = &cfg.command {
         let reader = PcapReader::open(path)?;
-        return run_io(cfg, reader);
+        return run_io(cfg, reader, EofBehavior::Success);
     }
     if cfg.hex {
-        return run_io(cfg, HexReader::new(BufReader::new(io::stdin())));
+        return run_io(
+            cfg,
+            HexReader::new(BufReader::new(io::stdin())),
+            EofBehavior::Success,
+        );
     }
     if cfg.use_fwd() {
         let addr = cfg.fwd_addr();
-        match crate::interface::fwd::TcpFrames::connect(&addr) {
-            Ok(frames) => {
-                eprintln!(
-                    "listening {} via {addr} as {} ({})",
-                    cfg.iface, cfg.addr, cfg.mac
-                );
-                return run_io(cfg, frames);
-            }
-            Err(e) => {
-                eprintln!("cannot connect to TAP sidecar at {addr}: {e}");
-                eprintln!("Start it with:  minitcp tap up");
-                std::process::exit(1);
-            }
-        }
+        let frames = crate::interface::fwd::TcpFrames::connect(&addr).map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!("cannot connect to TAP sidecar at {addr}; try `minitcp tap up`: {error}"),
+            )
+        })?;
+        log::status::info(format!(
+            "listening {} via {addr} as {} ({})",
+            cfg.iface, cfg.addr, cfg.mac
+        ));
+        return run_io(cfg, frames, EofBehavior::Failure);
     }
-    let tap = open_tap(&cfg);
-    eprintln!("listening {} as {} ({})", cfg.iface, cfg.addr, cfg.mac);
-    run_io(cfg, tap)
+    let tap = open_tap(&cfg)?;
+    log::status::info(format!(
+        "listening {} as {} ({})",
+        cfg.iface, cfg.addr, cfg.mac
+    ));
+    run_io(cfg, tap, EofBehavior::Failure)
 }
 
-fn run_io<I: FrameIo>(cfg: Config, inner: I) -> std::io::Result<()> {
+#[derive(Clone, Copy)]
+enum EofBehavior {
+    Success,
+    Failure,
+}
+
+fn run_io<I: FrameIo>(cfg: Config, inner: I, eof_behavior: EofBehavior) -> std::io::Result<()> {
     let capture = match &cfg.write {
         Some(path) => Some(PcapWriter::create(path)?),
         None => None,
@@ -173,19 +205,39 @@ fn run_io<I: FrameIo>(cfg: Config, inner: I) -> std::io::Result<()> {
     let mut buffer = [0u8; 2048];
     let mut rng = SeededRng::from_entropy();
     let mut seen = 0u64;
+    let _ = log::take_output_error();
     loop {
-        if let Some(limit) = cfg.count {
-            if seen >= limit {
-                return Ok(());
-            }
-        }
-        let n = frames.read_frame(&mut buffer)?;
-        if n == 0 {
+        if let Some(limit) = cfg.count
+            && seen >= limit
+        {
             return Ok(());
+        }
+        let n = frames.read_frame(&mut buffer).map_err(|error| {
+            io::Error::new(error.kind(), format!("cannot read next frame: {error}"))
+        })?;
+        if n == 0 {
+            return match eof_behavior {
+                EofBehavior::Success => Ok(()),
+                EofBehavior::Failure => Err(io::Error::new(
+                    io::ErrorKind::ConnectionReset,
+                    "frame source closed unexpectedly",
+                )),
+            };
         }
         seen += 1;
         if let Some(reply) = handle_frame(&cfg, &buffer[..n], &mut rng) {
-            frames.write_frame(&reply)?;
+            frames.write_frame(&reply).map_err(|error| {
+                io::Error::new(error.kind(), format!("cannot write reply frame: {error}"))
+            })?;
+        }
+        if let Some(error) = log::take_output_error() {
+            if error.kind() == io::ErrorKind::BrokenPipe {
+                return Ok(());
+            }
+            return Err(io::Error::new(
+                error.kind(),
+                format!("cannot write protocol output: {error}"),
+            ));
         }
     }
 }
@@ -232,7 +284,17 @@ fn handle_frame(cfg: &Config, bytes: &[u8], rng: &mut SeededRng) -> Option<Vec<u
                 return None;
             };
 
-            let (spa, tpa) = arp_addrs(frame.payload).unwrap();
+            let Some((spa, tpa)) = arp_addrs(frame.payload) else {
+                log::emit_at(
+                    &when,
+                    Verb::Drop,
+                    "arp",
+                    "L2",
+                    &macs,
+                    "truncated ARP payload",
+                );
+                return None;
+            };
             let mut ethernet_reply = Vec::new();
             EthernetFrame::write_ethernet(
                 &mut ethernet_reply,
@@ -629,9 +691,20 @@ mod tests {
             reads: reads.clone(),
             writes: writes.clone(),
         };
-        run_io(cfg, io).unwrap();
+        run_io(cfg, io, EofBehavior::Success).unwrap();
         assert_eq!(writes.borrow().len(), 2);
         assert_eq!(reads.borrow().len(), 1);
+    }
+
+    #[test]
+    fn unexpected_live_eof_is_a_runtime_failure() {
+        let io = MockIo {
+            reads: Rc::new(RefCell::new(VecDeque::new())),
+            writes: Rc::new(RefCell::new(Vec::new())),
+        };
+        let error = run_io(Config::defaults(), io, EofBehavior::Failure).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::ConnectionReset);
+        assert!(error.to_string().contains("closed unexpectedly"), "{error}");
     }
 
     #[test]

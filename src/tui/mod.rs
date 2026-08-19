@@ -1,10 +1,11 @@
 // Terminal UI. The protocol implementation lives outside this folder.
 
 use std::collections::VecDeque;
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader, IsTerminal, Read};
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -21,6 +22,45 @@ use crate::interface::fwd::DEFAULT_FWD;
 use crate::tapcmd::CONTAINER;
 
 const MAX_LINES: usize = 2000;
+const SHORT_COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
+static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn request_shutdown(_signal: libc::c_int) {
+    SHUTDOWN_REQUESTED.store(true, Ordering::Relaxed);
+}
+
+fn install_signal_handlers() -> std::io::Result<()> {
+    let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
+    action.sa_sigaction = request_shutdown as *const () as usize;
+    action.sa_flags = 0;
+    unsafe {
+        libc::sigemptyset(&mut action.sa_mask);
+        for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP, libc::SIGQUIT] {
+            if libc::sigaction(signal, &action, std::ptr::null_mut()) < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn configure_child_process() -> std::io::Result<()> {
+    unsafe {
+        if libc::setpgid(0, 0) < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        #[cfg(target_os = "linux")]
+        {
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            if libc::getppid() == 1 {
+                libc::raise(libc::SIGTERM);
+            }
+        }
+    }
+    Ok(())
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Pane {
@@ -74,6 +114,7 @@ impl DumpFilter {
 
 enum Msg {
     Stack(String),
+    StackStatus(String),
     Dump(String),
     Action(String),
 }
@@ -179,6 +220,8 @@ struct ChildProc {
     child: Option<Child>,
     privileged: bool,
     command_pid: Option<i32>,
+    exit_status: Option<std::process::ExitStatus>,
+    exit_error: Option<String>,
 }
 
 impl ChildProc {
@@ -190,10 +233,7 @@ impl ChildProc {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         unsafe {
-            cmd.pre_exec(|| {
-                libc::setpgid(0, 0);
-                Ok(())
-            });
+            cmd.pre_exec(configure_child_process);
         }
         let child = cmd.spawn()?;
         let command_pid = Some(child.id() as i32);
@@ -201,6 +241,8 @@ impl ChildProc {
             child: Some(child),
             privileged: false,
             command_pid,
+            exit_status: None,
+            exit_error: None,
         })
     }
 
@@ -220,17 +262,25 @@ impl ChildProc {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         unsafe {
-            cmd.pre_exec(|| {
-                libc::setpgid(0, 0);
-                Ok(())
-            });
+            cmd.pre_exec(configure_child_process);
         }
         let mut child = cmd.spawn()?;
-        let command_pid = child.stdout.as_mut().and_then(read_dump_pid);
+        let command_pid = match child.stdout.as_mut().and_then(read_dump_pid) {
+            Some(pid) => Some(pid),
+            None => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(std::io::Error::other(
+                    "tcpdump did not report its process ID",
+                ));
+            }
+        };
         Ok(Self {
             child: Some(child),
             privileged: true,
             command_pid,
+            exit_status: None,
+            exit_error: None,
         })
     }
 
@@ -242,10 +292,7 @@ impl ChildProc {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         unsafe {
-            cmd.pre_exec(|| {
-                libc::setpgid(0, 0);
-                Ok(())
-            });
+            cmd.pre_exec(configure_child_process);
         }
         let child = cmd.spawn()?;
         let command_pid = Some(child.id() as i32);
@@ -253,6 +300,8 @@ impl ChildProc {
             child: Some(child),
             privileged: false,
             command_pid,
+            exit_status: None,
+            exit_error: None,
         })
     }
 
@@ -270,8 +319,39 @@ impl ChildProc {
     fn alive(&mut self) -> bool {
         match self.child.as_mut() {
             None => false,
-            Some(c) => matches!(c.try_wait(), Ok(None)),
+            Some(c) => match c.try_wait() {
+                Ok(None) => true,
+                Ok(Some(status)) => {
+                    self.exit_status = Some(status);
+                    false
+                }
+                Err(error) => {
+                    self.exit_error = Some(error.to_string());
+                    false
+                }
+            },
         }
+    }
+
+    fn exit_summary(&self) -> String {
+        match self.exit_status {
+            Some(status) if status.success() => "successfully".into(),
+            Some(status) => status.code().map_or_else(
+                || "after a signal".into(),
+                |code| format!("with status {code}"),
+            ),
+            None if self.exit_error.is_some() => {
+                format!(
+                    "after its status could not be read: {}",
+                    self.exit_error.as_deref().unwrap_or("unknown error")
+                )
+            }
+            None => "without an exit status".into(),
+        }
+    }
+
+    fn exited_successfully(&self) -> bool {
+        self.exit_status.is_some_and(|status| status.success())
     }
 
     fn kill(&mut self) {
@@ -317,15 +397,22 @@ fn read_dump_pid(stdout: &mut std::process::ChildStdout) -> Option<i32> {
 }
 
 fn stop_privileged(pid: i32, signal: &str) {
-    let _ = Command::new("sudo")
-        .args(["-n", "kill"])
-        .arg(format!("-{signal}"))
-        .arg("--")
-        .arg(pid.to_string())
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
+    let signal = format!("-{signal}");
+    let pid = pid.to_string();
+    match crate::process::output_timeout(
+        "sudo",
+        &["-n", "kill", &signal, "--", &pid],
+        Duration::from_secs(3),
+    ) {
+        Ok(output) if output.status.success() => {}
+        Ok(output) => crate::log::status::warn(format!(
+            "could not stop privileged tcpdump process {pid}: {}",
+            crate::process::output_detail(&output)
+        )),
+        Err(error) => crate::log::status::warn(format!(
+            "could not stop privileged tcpdump process {pid}: {error}"
+        )),
+    }
 }
 
 fn wait_for_exit(pid: i32, timeout: Duration) -> bool {
@@ -340,6 +427,16 @@ fn wait_for_exit(pid: i32, timeout: Duration) -> bool {
 impl Drop for ChildProc {
     fn drop(&mut self) {
         self.kill();
+    }
+}
+
+fn spawn_dump_with_retry(filter: DumpFilter, iface: &str) -> std::io::Result<ChildProc> {
+    match ChildProc::spawn_dump(filter, iface) {
+        Ok(child) => Ok(child),
+        Err(_) => {
+            thread::sleep(Duration::from_millis(200));
+            ChildProc::spawn_dump(filter, iface)
+        }
     }
 }
 
@@ -370,17 +467,29 @@ struct Lab {
 
 fn setup_command(tx: &Sender<Msg>, program: &str, args: &[&str]) -> bool {
     let _ = tx.send(Msg::Action(format!("$ {program} {}", args.join(" "))));
-    match Command::new(program).args(args).output() {
+    match crate::process::output_timeout(program, args, SHORT_COMMAND_TIMEOUT) {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
             for line in stdout.lines().chain(stderr.lines()) {
                 let _ = tx.send(Msg::Action(line.to_string()));
             }
-            output.status.success()
+            if output.status.success() {
+                true
+            } else {
+                let status = output.status.code().map_or_else(
+                    || "terminated by signal".to_string(),
+                    |code| format!("exited with status {code}"),
+                );
+                let _ = tx.send(Msg::Action(format!(
+                    "minitcp: error: `{program} {}` {status}",
+                    args.join(" ")
+                )));
+                false
+            }
         }
         Err(e) => {
-            let _ = tx.send(Msg::Action(format!("failed: {e}")));
+            let _ = tx.send(Msg::Action(format!("minitcp: error: {e}")));
             false
         }
     }
@@ -389,7 +498,7 @@ fn setup_command(tx: &Sender<Msg>, program: &str, args: &[&str]) -> bool {
 fn ensure_tap(cfg: &Config, tx: &Sender<Msg>) {
     if !cfg.tun.exists() {
         let _ = tx.send(Msg::Action(format!(
-            "{} is missing; run in the Dev Container or a privileged Linux container.",
+            "minitcp: error: {} is missing; run in the Dev Container or a privileged Linux container.",
             cfg.tun.display()
         )));
         return;
@@ -397,9 +506,7 @@ fn ensure_tap(cfg: &Config, tx: &Sender<Msg>) {
 
     let sys = format!("/sys/class/net/{}", cfg.iface);
     if !Path::new(&sys).exists() {
-        let user = Command::new("id")
-            .args(["-un"])
-            .output()
+        let user = crate::process::output_timeout("id", &["-un"], SHORT_COMMAND_TIMEOUT)
             .ok()
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
             .filter(|s| !s.is_empty())
@@ -416,16 +523,18 @@ fn ensure_tap(cfg: &Config, tx: &Sender<Msg>) {
     }
 
     let cidr = format!("{}/24", cfg.linux_addr);
-    let has_addr = Command::new("ip")
-        .args(["-4", "addr", "show", "dev", &cfg.iface])
-        .output()
-        .ok()
-        .map(|o| String::from_utf8_lossy(&o.stdout).contains(&cidr))
-        .unwrap_or(false);
+    let has_addr = crate::process::output_timeout(
+        "ip",
+        &["-4", "addr", "show", "dev", &cfg.iface],
+        SHORT_COMMAND_TIMEOUT,
+    )
+    .ok()
+    .map(|o| String::from_utf8_lossy(&o.stdout).contains(&cidr))
+    .unwrap_or(false);
     if !has_addr && !setup_command(tx, "sudo", &["ip", "addr", "add", &cidr, "dev", &cfg.iface]) {
         return;
     }
-    setup_command(tx, "sudo", &["ip", "link", "set", "dev", &cfg.iface, "up"]);
+    let _ = setup_command(tx, "sudo", &["ip", "link", "set", "dev", &cfg.iface, "up"]);
 }
 
 fn pump_reader<R: std::io::Read + Send + 'static>(
@@ -433,25 +542,43 @@ fn pump_reader<R: std::io::Read + Send + 'static>(
     tx: Sender<Msg>,
     wrap: fn(String) -> Msg,
 ) {
-    thread::spawn(move || {
-        let buf = BufReader::new(reader);
-        for line in buf.lines() {
-            match line {
-                Ok(s) => {
-                    if tx.send(wrap(s)).is_err() {
+    let error_tx = tx.clone();
+    if let Err(error) = thread::Builder::new()
+        .name("minitcp-child-output".into())
+        .spawn(move || {
+            let buf = BufReader::new(reader);
+            for line in buf.lines() {
+                match line {
+                    Ok(s) => {
+                        if tx.send(wrap(s)).is_err() {
+                            break;
+                        }
+                    }
+                    Err(error) => {
+                        let _ = tx.send(wrap(format!(
+                            "minitcp: error: cannot read child output: {error}"
+                        )));
                         break;
                     }
                 }
-                Err(_) => break,
             }
-        }
-    });
+        })
+    {
+        let _ = error_tx.send(wrap(format!(
+            "minitcp: error: cannot monitor child output: {error}"
+        )));
+    }
 }
 
-fn attach_child(child: &mut ChildProc, tx: Sender<Msg>, wrap: fn(String) -> Msg) {
+fn attach_child(
+    child: &mut ChildProc,
+    tx: Sender<Msg>,
+    stdout_wrap: fn(String) -> Msg,
+    stderr_wrap: fn(String) -> Msg,
+) {
     if let Some((out, err)) = child.take_stdout_stderr() {
-        pump_reader(out, tx.clone(), wrap);
-        pump_reader(err, tx, wrap);
+        pump_reader(out, tx.clone(), stdout_wrap);
+        pump_reader(err, tx, stderr_wrap);
     }
 }
 
@@ -460,10 +587,12 @@ fn tap_status(iface: &str, linux_addr: &str) -> (bool, String) {
     if !up {
         return (false, "down".into());
     }
-    let out = Command::new("ip")
-        .args(["-br", "addr", "show", iface])
-        .output()
-        .ok();
+    let out = crate::process::output_timeout(
+        "ip",
+        &["-br", "addr", "show", iface],
+        SHORT_COMMAND_TIMEOUT,
+    )
+    .ok();
     let text = out
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_default();
@@ -479,7 +608,7 @@ fn tap_status(iface: &str, linux_addr: &str) -> (bool, String) {
 fn run_short(tx: &Sender<Msg>, program: &str, args: &[&str]) {
     let shown = format!("$ {program} {}", args.join(" "));
     let _ = tx.send(Msg::Action(shown));
-    match Command::new(program).args(args).output() {
+    match crate::process::output_timeout(program, args, SHORT_COMMAND_TIMEOUT) {
         Ok(out) => {
             let stdout = String::from_utf8_lossy(&out.stdout);
             let stderr = String::from_utf8_lossy(&out.stderr);
@@ -489,9 +618,16 @@ fn run_short(tx: &Sender<Msg>, program: &str, args: &[&str]) {
             if stdout.is_empty() && stderr.is_empty() {
                 let _ = tx.send(Msg::Action("(no output)".into()));
             }
+            if !out.status.success() {
+                let status = out.status.code().map_or_else(
+                    || "terminated by signal".to_string(),
+                    |code| format!("exited with status {code}"),
+                );
+                let _ = tx.send(Msg::Action(format!("minitcp: error: command {status}")));
+            }
         }
         Err(e) => {
-            let _ = tx.send(Msg::Action(format!("failed: {e}")));
+            let _ = tx.send(Msg::Action(format!("minitcp: error: {e}")));
         }
     }
 }
@@ -509,7 +645,7 @@ impl Lab {
 
         let verbose = !cfg.quiet;
         let mut stack = ChildProc::spawn_stack(&cfg, verbose)?;
-        attach_child(&mut stack, tx.clone(), Msg::Stack);
+        attach_child(&mut stack, tx.clone(), Msg::Stack, Msg::StackStatus);
 
         let filter = DumpFilter::All;
         let mut dump = if remote {
@@ -520,19 +656,25 @@ impl Lab {
                 child: None,
                 privileged: true,
                 command_pid: None,
+                exit_status: None,
+                exit_error: None,
             }
         } else {
-            match ChildProc::spawn_dump(filter, &cfg.iface) {
+            match spawn_dump_with_retry(filter, &cfg.iface) {
                 Ok(mut d) => {
-                    attach_child(&mut d, tx.clone(), Msg::Dump);
+                    attach_child(&mut d, tx.clone(), Msg::Dump, Msg::Dump);
                     d
                 }
                 Err(e) => {
-                    let _ = tx.send(Msg::Dump(format!("tcpdump not started: {e}")));
+                    let _ = tx.send(Msg::Dump(format!(
+                        "minitcp: error: tcpdump not started: {e}"
+                    )));
                     ChildProc {
                         child: None,
                         privileged: true,
                         command_pid: None,
+                        exit_status: None,
+                        exit_error: None,
                     }
                 }
             }
@@ -556,7 +698,10 @@ impl Lab {
             );
         }
         if !stack_alive {
-            action_buf.push("stack failed to stay up — try minitcp tap up then r".into());
+            action_buf.push(
+                "minitcp: error: stack failed to stay up; try `minitcp tap up`, then press r"
+                    .into(),
+            );
         }
 
         Ok(Self {
@@ -602,7 +747,7 @@ impl Lab {
         self.stack.kill();
         match ChildProc::spawn_stack(&self.cfg, self.verbose) {
             Ok(mut c) => {
-                attach_child(&mut c, self.tx.clone(), Msg::Stack);
+                attach_child(&mut c, self.tx.clone(), Msg::Stack, Msg::StackStatus);
                 self.stack = c;
                 self.stack_alive = true;
                 self.icmp_in = 0;
@@ -611,7 +756,10 @@ impl Lab {
                 self.arp_out = 0;
                 self.push_pane(Pane::Stack, "— stack restarted —".into());
             }
-            Err(e) => self.push_pane(Pane::Actions, format!("restart stack failed: {e}")),
+            Err(e) => self.push_pane(
+                Pane::Actions,
+                format!("minitcp: error: could not restart stack: {e}"),
+            ),
         }
     }
 
@@ -624,9 +772,9 @@ impl Lab {
             return;
         }
         self.dump.kill();
-        match ChildProc::spawn_dump(self.filter, &self.cfg.iface) {
+        match spawn_dump_with_retry(self.filter, &self.cfg.iface) {
             Ok(mut c) => {
-                attach_child(&mut c, self.tx.clone(), Msg::Dump);
+                attach_child(&mut c, self.tx.clone(), Msg::Dump, Msg::Dump);
                 self.dump = c;
                 self.dump_alive = true;
                 self.push_pane(
@@ -634,7 +782,10 @@ impl Lab {
                     format!("— {} —", self.filter.title(&self.cfg.iface)),
                 );
             }
-            Err(e) => self.push_pane(Pane::Dump, format!("tcpdump failed: {e}")),
+            Err(e) => self.push_pane(
+                Pane::Dump,
+                format!("minitcp: error: could not start tcpdump: {e}"),
+            ),
         }
     }
 
@@ -672,10 +823,12 @@ impl Lab {
         self.action_buf.push(format!("$ {command}"));
         match ChildProc::spawn_action(command) {
             Ok(mut child) => {
-                attach_child(&mut child, self.tx.clone(), Msg::Action);
+                attach_child(&mut child, self.tx.clone(), Msg::Action, Msg::Action);
                 self.action_process = Some(child);
             }
-            Err(e) => self.action_buf.push(format!("command failed: {e}")),
+            Err(e) => self
+                .action_buf
+                .push(format!("minitcp: error: could not start command: {e}")),
         }
     }
 
@@ -726,6 +879,7 @@ impl Lab {
                     self.count_stack_line(&s);
                     self.push_pane(Pane::Stack, s);
                 }
+                Msg::StackStatus(s) => self.push_pane(Pane::Stack, s),
                 Msg::Dump(s) => self.push_pane(Pane::Dump, s),
                 Msg::Action(s) => self.push_pane(Pane::Actions, s),
             }
@@ -743,10 +897,24 @@ impl Lab {
             let stack_alive = self.stack.alive();
             let dump_alive = self.dump.alive();
             if self.stack_alive && !stack_alive {
-                self.push_pane(Pane::Stack, "— stack exited; press r to restart —".into());
+                let line = if self.stack.exited_successfully() {
+                    "minitcp: stack finished successfully".into()
+                } else {
+                    format!(
+                        "minitcp: error: stack exited {}; press r to restart",
+                        self.stack.exit_summary()
+                    )
+                };
+                self.push_pane(Pane::Stack, line);
             }
             if self.dump_alive && !dump_alive {
-                self.push_pane(Pane::Dump, "— tcpdump exited; press t to restart —".into());
+                self.push_pane(
+                    Pane::Dump,
+                    format!(
+                        "minitcp: error: tcpdump exited {}; press t to restart",
+                        self.dump.exit_summary()
+                    ),
+                );
             }
             self.stack_alive = stack_alive;
             self.dump_alive = dump_alive;
@@ -757,11 +925,18 @@ impl Lab {
             .action_process
             .as_mut()
             .is_some_and(|process| !process.alive());
-        if action_finished {
-            if let Some(mut process) = self.action_process.take() {
-                process.kill();
+        if action_finished && let Some(mut process) = self.action_process.take() {
+            let success = process.exited_successfully();
+            let summary = process.exit_summary();
+            process.kill();
+            if success {
+                self.push_pane(Pane::Actions, "— command finished —".into());
+            } else {
+                self.push_pane(
+                    Pane::Actions,
+                    format!("minitcp: error: command exited {summary}"),
+                );
             }
-            self.push_pane(Pane::Actions, "— command finished —".into());
         }
     }
 
@@ -881,6 +1056,16 @@ impl Lab {
 
 fn style_line(text: &str) -> Line<'_> {
     let lower = text.to_ascii_lowercase();
+    if text.starts_with("minitcp:") {
+        let color = if lower.starts_with("minitcp: error:") {
+            Color::Red
+        } else if lower.starts_with("minitcp: warning:") {
+            Color::Yellow
+        } else {
+            Color::LightBlue
+        };
+        return Line::from(Span::styled(text.to_string(), Style::default().fg(color)));
+    }
     if lower.contains("error") || lower.contains("failed") || lower.contains("bad ") {
         return Line::from(Span::styled(
             text.to_string(),
@@ -1128,6 +1313,9 @@ fn render_term(
 
 fn ui_loop(terminal: &mut DefaultTerminal, lab: &mut Lab) -> std::io::Result<()> {
     loop {
+        if SHUTDOWN_REQUESTED.load(Ordering::Relaxed) {
+            break;
+        }
         lab.drain_msgs();
         lab.refresh_status();
         terminal.draw(|f| draw(f, lab))?;
@@ -1155,10 +1343,29 @@ fn ui_loop(terminal: &mut DefaultTerminal, lab: &mut Lab) -> std::io::Result<()>
 }
 
 pub fn run_lab(cfg: Config) -> std::io::Result<()> {
+    if !std::io::stdout().is_terminal() {
+        return Err(std::io::Error::other(
+            "run needs a terminal; use `minitcp stack` for piped output",
+        ));
+    }
+    SHUTDOWN_REQUESTED.store(false, Ordering::Relaxed);
+    install_signal_handlers().map_err(|error| {
+        std::io::Error::new(
+            error.kind(),
+            format!("cannot install terminal signal handlers: {error}"),
+        )
+    })?;
     let mut lab = Lab::start(cfg)?;
-    let mut terminal = ratatui::init();
+    let mut terminal = ratatui::try_init().map_err(|error| {
+        std::io::Error::new(
+            error.kind(),
+            format!("cannot initialize terminal UI: {error}"),
+        )
+    })?;
     let result = ui_loop(&mut terminal, &mut lab);
-    ratatui::restore();
+    if let Err(error) = ratatui::try_restore() {
+        crate::log::status::warn(format!("could not fully restore terminal: {error}"));
+    }
     lab.stack.kill();
     lab.dump.kill();
     if let Some(mut process) = lab.action_process.take() {
@@ -1241,5 +1448,13 @@ mod tests {
         buffer.push("packet".into());
         buffer.clear();
         assert!(buffer.visible(10).is_empty());
+    }
+
+    #[test]
+    fn shutdown_signal_requests_clean_ui_exit() {
+        SHUTDOWN_REQUESTED.store(false, Ordering::Relaxed);
+        request_shutdown(libc::SIGTERM);
+        assert!(SHUTDOWN_REQUESTED.load(Ordering::Relaxed));
+        SHUTDOWN_REQUESTED.store(false, Ordering::Relaxed);
     }
 }
