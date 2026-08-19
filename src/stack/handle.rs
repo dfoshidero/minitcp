@@ -5,6 +5,16 @@
 //! inside that. Everything it needs to parse or build lives in `proto`; this
 //! file is the dispatch and the narration, not the wire formats.
 //!
+//! ```text
+//! TAP ──▶ ethernet ─┬─▶ arp ─────────────────▶ arp reply
+//!                   └─▶ ipv4 ─▶ icmp echo ───▶ echo reply
+//!                                udp | tcp ──▶ dropped, not implemented
+//! ```
+//!
+//! Replies are built from the inside out — ICMP first, then the IPv4 header
+//! around it, then the Ethernet header around that — because each layer's
+//! length and checksum depend on what it is wrapping.
+//!
 //! It is deliberately a pure function of (config, bytes) plus the RNG: no
 //! sockets, no files, no clock. That is what makes the whole stack testable by
 //! handing it a byte array.

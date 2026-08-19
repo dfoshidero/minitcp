@@ -1,4 +1,17 @@
-//! Length-prefixed Ethernet frames over TCP (TAP sidecar <-> host stack).
+//! Ethernet frames over TCP, so the stack and the TAP can be on different
+//! machines — or, on macOS, in different kernels.
+//!
+//! TCP is a byte stream with no notion of where one message ends, while a TAP
+//! deals in whole frames. So every frame goes on the wire with its length in
+//! front of it, and comes off the wire the same size it went on:
+//!
+//! ```text
+//! | u32 big-endian length | that many bytes of Ethernet frame |
+//! ```
+//!
+//! Two roles share this file. The *bridge* (`run_bridge`) owns the real TAP and
+//! serves one client at a time; the *host stack* (`TcpFrames`) connects to it
+//! and treats the socket as if it were the TAP.
 
 use std::io::{self, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
@@ -289,11 +302,23 @@ fn pump(tap: &mut TapInterface, stream: TcpStream) -> io::Result<()> {
     })
 }
 
+/// Why `poll_tap_or_stop` returned.
 enum Wake {
+    /// The other direction finished; this thread should return too.
     Stop,
+    /// A frame is waiting on the TAP.
     Tap,
 }
 
+/// Block until the TAP has a frame, or until the session ends.
+///
+/// A plain `read` on the TAP would block forever when the client hangs up:
+/// nothing would ever arrive to unblock it, and the thread would sit there
+/// holding a descriptor. So the thread waits on two descriptors at once with
+/// `poll(2)` — the TAP, and one end of a `UnixStream` pair that carries no
+/// data at all. The other end is owned by the socket->TAP thread, and dropping
+/// it when that thread exits closes it. A closed peer shows up here as
+/// `POLLHUP`, which is the "stop now" signal.
 fn poll_tap_or_stop(tap_fd: i32, wake_fd: i32) -> io::Result<Wake> {
     let mut fds = [
         libc::pollfd {
@@ -316,6 +341,8 @@ fn poll_tap_or_stop(tap_fd: i32, wake_fd: i32) -> io::Result<Wake> {
             }
             return Err(err);
         }
+        // The wake pipe is checked first: if both fired, the session is over
+        // and the frame no longer has anywhere to go.
         if fds[1].revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0 {
             return Ok(Wake::Stop);
         }
