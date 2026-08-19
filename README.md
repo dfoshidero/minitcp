@@ -22,7 +22,7 @@ docker run --rm -it \
 
 That pulls the image on first use, prints `minitcp --help`, and drops you in a shell with `minitcp` on `PATH`. Run `minitcp` for the terminal lab (`q` returns to the shell).
 
-If you really want to, you can pass subcommands on the same `docker run` line, for example `stack -q` at the end. You can however also do this directly in the image, `minitcp stack -q`.
+If you really want to, you can pass subcommands on the same `docker run` line, for example add `stack` at the end. You can however also do this directly in the image, `minitcp stack`.
 
 The image is `linux/amd64` and `linux/arm64` (Intel/AMD Linux, and Apple Silicon via Docker Desktop). TAP is a Linux kernel device, so on macOS or Windows the lab runs in Docker’s Linux VM.
 
@@ -151,6 +151,31 @@ Scrolling up pauses that focused pane, which is marked `PAUSED`. Reaching the bo
 
 Press `p` to ping `10.0.0.2`. You should see replies from MiniTCP (`64 bytes from 10.0.0.2`).
 
+## Flags and config
+
+Everything is optional. Defaults are the lab above (`tap0`, MiniTCP `10.0.0.2` / `02:00:00:00:00:02`, Linux `10.0.0.1`). `minitcp --help` lists commands and flags.
+
+IP and MAC are independent: change `--addr` without `--mac` unless two MiniTCP processes share the same TAP.
+
+```bash
+minitcp --iface tap1
+minitcp --addr 10.0.0.3 --mac 02:00:00:00:00:03
+minitcp stack --write out.pcap
+minitcp replay out.pcap -q
+minitcp stack --drop icmp -c 5
+```
+
+Same knobs can live in `minitcp.toml` in the working directory, or `--config FILE`. Command line wins over the file.
+
+```toml
+iface = "tap1"
+addr = "10.0.0.3"
+quiet = true
+drop = ["icmp"]
+```
+
+Docker: mount the file into `/home/netstack` (the image workdir).
+
 ### Manual three-terminal workflow
 
 Use this if you want to inspect each command without the lab.
@@ -240,11 +265,13 @@ IPv4 notes that are easy to miss:
 - `docs/GLOSSARY.md` — short definitions of terms the code uses.
 - `docker/Dockerfile` — published lab image (`ghcr.io/dfoshidero/minitcp`). The Dev Container image is `.devcontainer/Dockerfile`.
 - `scripts/setup-tap.sh` — manually create and bring up `tap0`; the lab does this automatically.
-- `src/main.rs` — command dispatcher: terminal lab by default, raw stack with `stack`.
-- `src/stack.rs` — TAP loop: read a frame, dispatch to a protocol, write a reply.
+- `src/main.rs` — command dispatcher: terminal lab by default, `stack`, `replay`, `pcap-info`.
+- `src/cli.rs` — flags, `minitcp.toml`, and `--help`.
+- `src/stack.rs` — frame loop: TAP, pcap, or hex; dispatch to a protocol; write a reply.
 - `src/log.rs` — quiet one-liner, or verbose `[IN]` / `[OUT]` / `[..]` peel.
 - `src/tui/` — terminal UI: split panes, child processes, key actions, and scrollback.
 - `src/interface/tap.rs` — open `/dev/net/tun`, read/write raw frames. No protocol parsing.
+- `src/interface/pcap.rs` — classic pcap read/write, `pcap-info`, and hex frames.
 - `src/proto/` — wire formats MiniTCP speaks:
   - `ethernet.rs` — Ethernet II: destination MAC, source MAC, EtherType, payload.
   - `arp.rs` — answer "who has `10.0.0.2`?" with MiniTCP's MAC.
