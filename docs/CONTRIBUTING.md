@@ -11,9 +11,10 @@ Releases are cut from [conventional commit](https://www.conventionalcommits.org/
 | `fix:` | run | patch |
 | `feat:` | run | minor |
 | `feat!:` or `BREAKING CHANGE:` | run | major |
-| `ci:`, `refactor:` | run | skipped |
+| `ci:`, `refactor:`, `chore:`, `test:` | run | no bump from these; the release job still runs so pending `feat`/`fix` can publish |
 | `docs:` | skipped | skipped |
-| `chore:`, `test:` | run | no publish (semantic-release no-op) |
+
+PRs build `linux/amd64` only. Pushes to `main` also build `linux/arm64` on a native ARM runner. A published release still pushes both architectures.
 
 Release notes go in [CHANGELOG.md](CHANGELOG.md) and GitHub Releases (`feat` / `fix` / breaking only). Squash-merge if you want `(#PR)` in the entry.
 

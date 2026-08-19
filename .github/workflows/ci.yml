@@ -18,11 +18,12 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       checks: ${{ steps.classify.outputs.checks }}
-      release: ${{ steps.classify.outputs.release }}
+      platforms: ${{ steps.classify.outputs.platforms }}
     steps:
       - id: classify
         env:
           COMMIT_MSG: ${{ github.event.pull_request.title || github.event.head_commit.message }}
+          EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
           first="$(printf '%s\n' "${COMMIT_MSG:-}" | head -n1 | tr -d '\r')"
@@ -31,18 +32,21 @@ jobs:
           prefix="${prefix%!}"
           type="$(printf '%s' "$prefix" | tr '[:upper:]' '[:lower:]')"
           checks=true
-          release=true
           case "$type" in
             docs)
               checks=false
-              release=false
-              ;;
-            ci|refactor)
-              release=false
               ;;
           esac
           echo "checks=$checks" >> "$GITHUB_OUTPUT"
-          echo "release=$release" >> "$GITHUB_OUTPUT"
+          {
+            echo "platforms<<EOF"
+            if [ "$EVENT" = pull_request ]; then
+              echo '[{"runner":"ubuntu-latest","platform":"linux/amd64"}]'
+            else
+              echo '[{"runner":"ubuntu-latest","platform":"linux/amd64"},{"runner":"ubuntu-24.04-arm","platform":"linux/arm64"}]'
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
   test:
     name: test
@@ -55,24 +59,27 @@ jobs:
       - run: cargo test
 
   build:
-    name: build
+    name: build (${{ matrix.platform }})
     needs: classify
     if: needs.classify.outputs.checks == 'true'
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.classify.outputs.platforms) }}
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v6
         with:
           context: .
           file: docker/Dockerfile
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ matrix.platform }}
           push: false
           tags: minitcp:ci
           outputs: type=cacheonly
-          cache-from: type=gha
-          cache-to: type=gha,mode=max,ignore-error=true
+          cache-from: type=gha,scope=${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.platform }},ignore-error=true
 
   status:
     name: status
@@ -94,8 +101,8 @@ jobs:
 
   release:
     name: release
-    needs: [classify, test, build]
-    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.classify.outputs.release == 'true' && needs.test.result == 'success' && needs.build.result == 'success' }}
+    needs: [test, build]
+    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.test.result == 'success' && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
