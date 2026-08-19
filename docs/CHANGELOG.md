@@ -1,3 +1,10 @@
+## [1.2.1](https://github.com/dfoshidero/minitcp/compare/v1.2.0...v1.2.1) (2026-08-19)
+
+
+### Bug Fixes
+
+* run TAP sidecar as root and wait until :7946 is listening ([d5b42cc](https://github.com/dfoshidero/minitcp/commit/d5b42cca906e57d3593114aa63aa8062ee00c6c0))
+
 # [1.2.0](https://github.com/dfoshidero/minitcp/compare/v1.1.2...v1.2.0) (2026-08-19)
 
 
