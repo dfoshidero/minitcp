@@ -1,38 +1,32 @@
 // src/main.rs
 
+mod cli;
 mod interface;
 mod log;
 mod proto;
 mod stack;
 mod tui;
 
-fn usage() {
-    eprintln!(
-        "minitcp — userspace TCP/IP lab
-
-  minitcp              terminal UI (stack + tcpdump + ping)
-  minitcp run          same as minitcp
-  minitcp stack        TAP loop only (decoded headers)
-  minitcp stack -q     TAP loop, one line per exchange
-"
-    );
-}
-
 fn main() -> std::io::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    match args.first().map(String::as_str) {
-        None | Some("run") => tui::run_lab(),
-        Some("stack") => {
-            let quiet = args.iter().any(|a| a == "-q" || a == "--quiet");
-            stack::run_stack(!quiet)
+    let cfg = match cli::parse(&args) {
+        Ok(cfg) => cfg,
+        Err(err) => {
+            eprintln!("minitcp: {err}\n");
+            eprint!("{}", cli::usage());
+            std::process::exit(2);
         }
-        Some("-h" | "--help" | "help") => {
-            usage();
+    };
+
+    match cfg.command {
+        cli::Command::Help => {
+            eprint!("{}", cli::usage());
             Ok(())
         }
-        Some(other) => {
-            eprintln!("unknown command: {other}\n");
-            usage();
+        cli::Command::Run => tui::run_lab(),
+        cli::Command::Stack => stack::run_stack(cfg.verbose()),
+        cli::Command::Replay(_) | cli::Command::PcapInfo(_) => {
+            eprintln!("minitcp: pcap commands are not wired yet");
             std::process::exit(2);
         }
     }
