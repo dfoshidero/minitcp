@@ -24,7 +24,7 @@ minitcp is a teaching tool, so the protocol code carries the teaching. Everythin
 
 - `src/proto/`, `src/stack/handle.rs`, and the wire formats in `src/interface/` — explain the format, the field, and why a packet looks the way it does. Prose and diagrams belong here.
 - Everywhere else (`src/cli/`, `src/sys/`, `src/tui/`, `src/log/`, `src/release/`) — a one-line `///` saying what the item is. Add a second sentence only when the code would otherwise be "corrected" back: a locale pin, a signal sent through `docker exec`, an error we deliberately swallow.
-- Module headers are a couple of lines, plus a map of child modules where there are any.
+- Module headers use `//!` so `cargo doc` picks them up, and are a couple of lines plus a map of child modules where there are any. Item docs use `///`; `//` is for byte-level notes inside a function.
 - Tests are documented by their names. A comment in a test body means the assertion encodes a rule the name cannot carry.
 
 If a comment restates the line under it, delete it.
