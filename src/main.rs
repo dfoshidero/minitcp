@@ -1,14 +1,14 @@
-// minitcp — a userspace TCP/IP stack you can watch work.
-//
-//   cli        the command line and minitcp.toml
-//   dispatch   which command runs what
-//   proto      wire formats: Ethernet, ARP, IPv4, ICMP
-//   stack      the loop that answers frames
-//   interface  what carries frames: TAP, sidecar, pcap, hex
-//   sys        this machine: processes, the TAP device, Docker
-//   log        protocol tracing and status messages
-//   tui        the terminal UI
-//   release    the update check
+//! minitcp — a userspace TCP/IP stack you can watch work.
+//!
+//!   cli        the command line and minitcp.toml
+//!   dispatch   which command runs what
+//!   proto      wire formats: Ethernet, ARP, IPv4, ICMP
+//!   stack      the loop that answers frames
+//!   interface  what carries frames: TAP, sidecar, pcap, hex
+//!   sys        this machine: processes, the TAP device, Docker
+//!   log        protocol tracing and status messages
+//!   tui        the terminal UI
+//!   release    the update check
 
 mod cli;
 mod dispatch;
@@ -20,12 +20,11 @@ mod stack;
 mod sys;
 mod tui;
 
-/// Why minitcp is about to exit non-zero: the command line's fault (exit 2),
-/// the config file's fault, or the world's. A broken pipe is none of them —
-/// `minitcp stack | head` is a normal way to use the tool.
+/// Why minitcp is about to exit non-zero. A `ParseError` names its own exit
+/// code; everything else is the world's fault and exits 1 — except a broken
+/// pipe, since `minitcp stack | head` is a normal way to use the tool.
 enum AppError {
-    Usage(cli::ParseError),
-    Config(cli::ParseError),
+    Cli(cli::ParseError),
     Runtime(std::io::Error),
 }
 
@@ -38,13 +37,9 @@ impl From<std::io::Error> for AppError {
 fn main() {
     let code = match dispatch::run() {
         Ok(()) => 0,
-        Err(AppError::Usage(error)) => {
+        Err(AppError::Cli(error)) => {
             let _ = log::write_stderr(&error.to_string());
-            2
-        }
-        Err(AppError::Config(error)) => {
-            let _ = log::write_stderr(&error.to_string());
-            1
+            error.exit_code()
         }
         Err(AppError::Runtime(error)) if error.kind() == std::io::ErrorKind::BrokenPipe => 0,
         Err(AppError::Runtime(error)) => {

@@ -1,8 +1,8 @@
-// The help text, and the one-line usage blocks that go with a specific error.
-//
-// Per-flag help is generated from `flags::FLAGS` rather than written out again
-// here, so an error can point at the three lines that matter without those
-// lines drifting from what the parser actually accepts.
+//! The help text, and the one-line usage blocks that go with a specific error.
+//!
+//! Per-flag help is generated from `flags::FLAGS` rather than written out again
+//! here, so an error can point at the three lines that matter without those
+//! lines drifting from what the parser actually accepts.
 
 use std::io::IsTerminal;
 

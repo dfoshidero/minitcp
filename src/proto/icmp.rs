@@ -1,4 +1,11 @@
-// src/proto/icmp.rs
+//! ICMP (RFC 792) — the layer `ping` speaks.
+//!
+//! Sits inside IPv4 as protocol 1. An echo request (type 8) and the reply
+//! (type 0) share one shape: type, code, checksum, id, sequence, then whatever
+//! bytes the sender chose, which the replier must send straight back.
+//!
+//! Unlike TCP and UDP, the checksum here covers the whole message rather than
+//! a header and a pseudo-header — there is no address to protect.
 
 use super::checksum::internet_checksum;
 
@@ -15,8 +22,10 @@ pub fn make_echo_reply(request: &[u8]) -> Result<Vec<u8>, &'static str> {
         return Err("bad icmp checksum");
     }
 
-    let mut reply = request.to_vec(); // copy the request to a new vector
-    // we are copying the request to a new vector because we need to modify the header``
+    // A reply is the request with a new type and a fresh checksum: the id, the
+    // sequence and the payload all have to come back unchanged, which is how
+    // `ping` matches an answer to what it sent.
+    let mut reply = request.to_vec();
     reply[0] = 0; // Echo Reply
     reply[2] = 0; // checksum must be recalculated from scratch
     reply[3] = 0;

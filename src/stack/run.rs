@@ -1,10 +1,10 @@
-// Wiring the stack to something that carries frames.
-//
-// Which carrier that is — a TAP on this machine, the sidecar over TCP, a pcap
-// file, hex on stdin — is decided here and nowhere else. Once chosen, the loop
-// is identical: read a frame, hand it to `handle_frame`, write back whatever
-// comes out. `open_tap` is the fiddly part, because attaching to a device that
-// was created moments ago can briefly fail for reasons that fix themselves.
+//! Wiring the stack to something that carries frames.
+//!
+//! Which carrier that is — a TAP on this machine, the sidecar over TCP, a pcap
+//! file, hex on stdin — is decided here and nowhere else. Once chosen, the loop
+//! is identical: read a frame, hand it to `handle_frame`, write back whatever
+//! comes out. `open_tap` is the fiddly part, because attaching to a device that
+//! was created moments ago can briefly fail for reasons that fix themselves.
 
 use std::io::{self, BufReader};
 use std::path::Path;
@@ -158,10 +158,9 @@ pub(super) fn run_io<I: FrameIo>(
                 io::Error::new(error.kind(), format!("cannot write reply frame: {error}"))
             })?;
         }
+        // A closed stdout ends the run. `main` decides what that means for the
+        // exit code — a broken pipe is `minitcp stack | head`, not a failure.
         if let Some(error) = log::take_output_error() {
-            if error.kind() == io::ErrorKind::BrokenPipe {
-                return Ok(());
-            }
             return Err(io::Error::new(
                 error.kind(),
                 format!("cannot write protocol output: {error}"),

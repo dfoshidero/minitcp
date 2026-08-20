@@ -1,7 +1,7 @@
-// What each keystroke does.
-//
-// One file, so the key map reads as a list and can be checked against the hint
-// bar drawn at the bottom of the screen.
+//! What each keystroke does.
+//!
+//! One file, so the key map reads as a list and can be checked against the hint
+//! bar drawn at the bottom of the screen.
 
 use std::thread;
 

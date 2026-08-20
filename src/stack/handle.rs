@@ -1,13 +1,23 @@
-// The stack itself: one frame in, at most one frame out.
-//
-// `handle_frame` is where minitcp decides what it is looking at and what, if
-// anything, to say back — Ethernet header first, then ARP or IPv4, then ICMP
-// inside that. Everything it needs to parse or build lives in `proto`; this
-// file is the dispatch and the narration, not the wire formats.
-//
-// It is deliberately a pure function of (config, bytes) plus the RNG: no
-// sockets, no files, no clock. That is what makes the whole stack testable by
-// handing it a byte array.
+//! The stack itself: one frame in, at most one frame out.
+//!
+//! `handle_frame` is where minitcp decides what it is looking at and what, if
+//! anything, to say back — Ethernet header first, then ARP or IPv4, then ICMP
+//! inside that. Everything it needs to parse or build lives in `proto`; this
+//! file is the dispatch and the narration, not the wire formats.
+//!
+//! ```text
+//! TAP ──▶ ethernet ─┬─▶ arp ─────────────────▶ arp reply
+//!                   └─▶ ipv4 ─▶ icmp echo ───▶ echo reply
+//!                                udp | tcp ──▶ dropped, not implemented
+//! ```
+//!
+//! Replies are built from the inside out — ICMP first, then the IPv4 header
+//! around it, then the Ethernet header around that — because each layer's
+//! length and checksum depend on what it is wrapping.
+//!
+//! It is deliberately a pure function of (config, bytes) plus the RNG: no
+//! sockets, no files, no clock. That is what makes the whole stack testable by
+//! handing it a byte array.
 
 use std::net::Ipv4Addr;
 
@@ -19,15 +29,6 @@ use crate::proto::icmp::{self, make_echo_reply, set_echo_id};
 use crate::proto::ipv4::{Ipv4Packet, Protocol};
 
 use super::rng::{SeededRng, drop_pct_hit};
-
-fn protocol_name(protocol: Protocol) -> String {
-    match protocol {
-        Protocol::Icmp => "icmp".into(),
-        Protocol::Udp => "udp".into(),
-        Protocol::Tcp => "tcp".into(),
-        Protocol::Unknown(n) => format!("protocol {n}"),
-    }
-}
 
 fn icmp_quiet(message: &[u8]) -> String {
     let (id, seq) = icmp::id_seq(message).unwrap_or((0, 0));
@@ -76,7 +77,7 @@ pub(super) fn handle_frame(cfg: &Config, bytes: &[u8], rng: &mut SeededRng) -> O
     let verbose = cfg.verbose;
     let our_ip = cfg.addr;
     let our_mac = cfg.mac;
-    let when = log::now();
+    let when = log::timestamp();
 
     let frame = match EthernetFrame::parse(bytes) {
         Ok(frame) => frame,
@@ -169,7 +170,7 @@ pub(super) fn handle_frame(cfg: &Config, bytes: &[u8], rng: &mut SeededRng) -> O
                         &format!(
                             "ttl={} proto={} payload={}",
                             packet.ttl,
-                            protocol_name(packet.protocol),
+                            packet.protocol,
                             packet.payload.len()
                         ),
                     );

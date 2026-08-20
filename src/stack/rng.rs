@@ -1,8 +1,8 @@
-// A tiny deterministic random number generator, for `--drop-pct`.
-//
-// xorshift64*: three shifts and a multiply. Nowhere near good enough for
-// anything security-related, which is fine — the question is only "should this
-// frame vanish?", and a seed makes the same run repeatable.
+//! A tiny deterministic random number generator, for `--drop-pct`.
+//!
+//! xorshift64*: three shifts and a multiply. Nowhere near good enough for
+//! anything security-related, which is fine — the question is only "should this
+//! frame vanish?", and a seed makes the same run repeatable.
 
 pub struct SeededRng {
     state: u64,

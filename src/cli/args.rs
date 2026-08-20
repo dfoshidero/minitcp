@@ -1,10 +1,10 @@
-// Walking argv.
-//
-// The shape is `minitcp [family] [subcommand] [flags]`, and flags may appear
-// anywhere — before the command, after it, `--iface tap1` or `--iface=tap1`.
-// Families (`tap`, `identity`, `pcap`) exist so that related commands read as a
-// group and can be helped as a group. Nothing here decides what a flag *means*;
-// that is `flags::apply_flag`.
+//! Walking argv.
+//!
+//! The shape is `minitcp [family] [subcommand] [flags]`, and flags may appear
+//! anywhere — before the command, after it, `--iface tap1` or `--iface=tap1`.
+//! Families (`tap`, `identity`, `pcap`) exist so that related commands read as a
+//! group and can be helped as a group. Nothing here decides what a flag *means*;
+//! that is `flags::apply_flag`.
 
 use std::path::PathBuf;
 
@@ -193,10 +193,7 @@ fn parse_identity(args: &[String], i: &mut usize, partial: &mut Partial) -> Resu
             *i += 1;
             let mac = take_value(args, i, "identity mac")
                 .map_err(|_| ParseError::with_usage("identity mac needs a MAC", USAGE_IDENTITY))?;
-            set_command(
-                partial,
-                Command::IdentitySetMac(parse_mac(mac).map_err(ParseError::msg)?),
-            )
+            set_command(partial, Command::IdentitySetMac(parse_mac(mac)?))
         }
         Some(other) => {
             *i += 1;

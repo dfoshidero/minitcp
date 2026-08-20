@@ -1,9 +1,9 @@
-// Creating and destroying the TAP device itself.
-//
-// A TAP is a virtual Ethernet cable: one end is an ordinary network interface
-// as far as Linux is concerned, the other end is a file descriptor a program
-// reads frames from and writes frames to. This module owns the first end;
-// `interface::tap` owns the second.
+//! Creating and destroying the TAP device itself.
+//!
+//! A TAP is a virtual Ethernet cable: one end is an ordinary network interface
+//! as far as Linux is concerned, the other end is a file descriptor a program
+//! reads frames from and writes frames to. This module owns the first end;
+//! `interface::tap` owns the second.
 
 use std::io;
 

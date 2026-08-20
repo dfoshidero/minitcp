@@ -1,8 +1,8 @@
-// The TAP sidecar: a container that owns the real TAP so macOS (and any host
-// without /dev/net/tun) can still run the lab.
-//
-// Everything here is about the container. The wire format it speaks is
-// `interface::fwd`; a TAP made directly on this machine is `sys::tapdev`.
+//! The TAP sidecar: a container that owns the real TAP so macOS (and any host
+//! without /dev/net/tun) can still run the lab.
+//!
+//! Everything here is about the container. The wire format it speaks is
+//! `interface::fwd`; a TAP made directly on this machine is `sys::tapdev`.
 
 use std::io;
 use std::thread;

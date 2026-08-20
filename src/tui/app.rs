@@ -1,9 +1,9 @@
-// The lab's state, and everything that changes it.
-//
-// `Lab` owns the three panes, the two child processes, and the status line.
-// Output arrives from background reader threads over a channel rather than
-// being polled, so a chatty stack cannot stall the UI; `drain_msgs` is where
-// those messages become pane content.
+//! The lab's state, and everything that changes it.
+//!
+//! `Lab` owns the three panes, the two child processes, and the status line.
+//! Output arrives from background reader threads over a channel rather than
+//! being polled, so a chatty stack cannot stall the UI; `drain_msgs` is where
+//! those messages become pane content.
 
 use std::io::{BufRead, BufReader};
 use std::sync::mpsc::{self, Receiver, Sender};

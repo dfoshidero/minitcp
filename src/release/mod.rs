@@ -1,4 +1,4 @@
-// Check GitHub Releases for a newer host binary. Fail open; never block the lab.
+//! Check GitHub Releases for a newer host binary. Fail open; never block the lab.
 
 use std::io::IsTerminal;
 use std::time::{Duration, SystemTime};

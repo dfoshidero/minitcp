@@ -1,8 +1,8 @@
-// Record everything that crosses the wire, without changing what crosses it.
-//
-// `CaptureIo` wraps any other carrier and tees both directions into a pcap
-// file for `--write out.pcap`. With no writer attached it is pure pass-through,
-// so the stack can wrap unconditionally.
+//! Record everything that crosses the wire, without changing what crosses it.
+//!
+//! `CaptureIo` wraps any other carrier and tees both directions into a pcap
+//! file for `--write out.pcap`. With no writer attached it is pure pass-through,
+//! so the stack can wrap unconditionally.
 
 use std::io;
 

@@ -1,19 +1,19 @@
-// One command in, one action out.
-//
-// Parsing above, doing below. One `match`, so the full list of what minitcp
-// can do reads in a single screen.
-//
-// One rule about streams: anything the user asked for — help, a `show` — is
-// the result and goes to stdout with exit 0. Usage errors and progress go to
-// stderr. That is what makes `minitcp --help | less` and `minitcp tap > tap.txt`
-// behave the way anyone would expect them to.
+//! One command in, one action out.
+//!
+//! Parsing above, doing below. One `match`, so the full list of what minitcp
+//! can do reads in a single screen.
+//!
+//! One rule about streams: anything the user asked for — help, a `show` — is
+//! the result and goes to stdout with exit 0. Usage errors and progress go to
+//! stderr. That is what makes `minitcp --help | less` and `minitcp tap > tap.txt`
+//! behave the way anyone would expect them to.
 
 use crate::cli::{self, Command, Config};
 use crate::{AppError, log, release, stack, sys, tui};
 
 pub fn run() -> Result<(), AppError> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let cfg = cli::parse(&args).map_err(AppError::Usage)?;
+    let cfg = cli::parse(&args).map_err(AppError::Cli)?;
 
     for warning in &cfg.warnings {
         log::status::warn(warning);
@@ -76,7 +76,7 @@ fn identity_status(cfg: &Config) -> String {
 }
 
 fn write_key(cfg: &Config, key: &str, value: &str) -> Result<(), AppError> {
-    cli::write_config_key(cfg, key, value).map_err(AppError::Config)?;
+    cli::write_config_key(cfg, key, value).map_err(AppError::Cli)?;
     log::status::ok(format!(
         "wrote {key} = {value}  ({})",
         cfg.config_path.display()

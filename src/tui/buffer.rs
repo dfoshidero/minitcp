@@ -1,8 +1,8 @@
-// One scrollback pane's worth of text.
-//
-// Capped, so a lab left running overnight cannot eat memory; and it separates
-// following the output from looking at it, so scrolling up is not undone by
-// the next line to arrive.
+//! One scrollback pane's worth of text.
+//!
+//! Capped, so a lab left running overnight cannot eat memory; and it separates
+//! following the output from looking at it, so scrolling up is not undone by
+//! the next line to arrive.
 
 use std::collections::VecDeque;
 

@@ -1,8 +1,8 @@
-// The userspace TCP/IP stack.
-//
-//   rng     deterministic frame dropping, for `--drop-pct`
-//   handle  one frame in, at most one frame out — the protocol logic
-//   run     choosing a carrier and running the loop over it
+//! The userspace TCP/IP stack.
+//!
+//!   rng     deterministic frame dropping, for `--drop-pct`
+//!   handle  one frame in, at most one frame out — the protocol logic
+//!   run     choosing a carrier and running the loop over it
 
 mod handle;
 mod rng;

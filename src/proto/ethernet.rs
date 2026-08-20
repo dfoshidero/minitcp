@@ -1,4 +1,16 @@
-// src/proto/ethernet.rs
+//! Ethernet II — the frame every other layer arrives inside.
+//!
+//! Layer 2. What comes off the TAP is one of these, and the first thing the
+//! stack does is take its 14-byte header apart:
+//!
+//! ```text
+//! 0      6      12    14
+//! | dst  | src  | type | payload …
+//!   MAC    MAC    0x0806 = ARP, 0x0800 = IPv4
+//! ```
+//!
+//! Addresses here are MACs: they identify a card on this cable and nothing
+//! further. Anything that has to cross a network lives in the payload.
 
 // Address on this cable only. IPv4 (10.0.0.2) is a different address, inside the payload.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

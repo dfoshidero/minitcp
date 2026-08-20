@@ -1,4 +1,11 @@
-// src/proto/ipv4.rs
+//! IPv4 (RFC 791) — addressing that survives leaving this cable.
+//!
+//! Layer 3, inside an Ethernet frame with ethertype 0x0800. The header is 20
+//! bytes when nobody has added options, and it carries a checksum over itself
+//! only: the payload is somebody else's problem, usually ICMP or TCP.
+//!
+//! MiniTCP refuses fragments. Reassembly is a whole subsystem, and nothing on
+//! a lab TAP produces them.
 
 use std::net::Ipv4Addr;
 
@@ -34,6 +41,19 @@ impl Protocol {
             Self::Tcp => 6,
             Self::Udp => 17,
             Self::Unknown(n) => n,
+        }
+    }
+}
+
+/// How a protocol is named in a trace line: the wire name where there is one,
+/// and the raw IPv4 protocol number where there is not.
+impl std::fmt::Display for Protocol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Icmp => f.write_str("icmp"),
+            Self::Udp => f.write_str("udp"),
+            Self::Tcp => f.write_str("tcp"),
+            Self::Unknown(n) => write!(f, "protocol {n}"),
         }
     }
 }

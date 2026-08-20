@@ -1,13 +1,13 @@
-// The terminal UI: three panes over the same stack the CLI runs.
-//
-//   buffer  scrollback for one pane
-//   child   the `minitcp stack` and `tcpdump` processes it runs
-//   app     the lab's state and how output reaches it
-//   keys    what each keystroke does
-//   draw    turning that state into a screen
-//
-// The UI implements no protocol logic. It shells out to the same commands a
-// user could type, so every pane shows what those commands printed.
+//! The terminal UI: three panes over the same stack the CLI runs.
+//!
+//!   buffer  scrollback for one pane
+//!   child   the `minitcp stack` and `tcpdump` processes it runs
+//!   app     the lab's state and how output reaches it
+//!   keys    what each keystroke does
+//!   draw    turning that state into a screen
+//!
+//! The UI implements no protocol logic. It shells out to the same commands a
+//! user could type, so every pane shows what those commands printed.
 
 mod app;
 mod buffer;

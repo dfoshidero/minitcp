@@ -1,9 +1,9 @@
-// Messages from minitcp about itself, as opposed to about the network.
-//
-// These always go to stderr, never stdout. Protocol output is the program's
-// actual result — the thing you would pipe into a file — and mixing "TAP
-// sidecar up" into it would corrupt that. Colour is added only when stderr is a
-// terminal, so redirecting to a file gives plain text.
+//! Messages from minitcp about itself, as opposed to about the network.
+//!
+//! These always go to stderr, never stdout. Protocol output is the program's
+//! actual result — the thing you would pipe into a file — and mixing "TAP
+//! sidecar up" into it would corrupt that. Colour is added only when stderr is a
+//! terminal, so redirecting to a file gives plain text.
 
 use std::io::{self, IsTerminal};
 

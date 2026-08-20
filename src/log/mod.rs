@@ -1,11 +1,11 @@
-// Writing things out.
-//
-//   trace   the frame-by-frame protocol narration, on stdout
-//   status  minitcp talking about itself, on stderr
-//
-// stdout is the result, stderr is commentary, so `minitcp stack > run.log`
-// gives a clean log and still shows problems. A broken pipe on stdout is normal
-// (`| head`), so protocol writes stash their error here rather than panic.
+//! Writing things out.
+//!
+//!   trace   the frame-by-frame protocol narration, on stdout
+//!   status  minitcp talking about itself, on stderr
+//!
+//! stdout is the result, stderr is commentary, so `minitcp stack > run.log`
+//! gives a clean log and still shows problems. A broken pipe on stdout is normal
+//! (`| head`), so protocol writes stash their error here rather than panic.
 
 pub mod status;
 pub mod trace;
@@ -13,7 +13,7 @@ pub mod trace;
 use std::io::{self, Write};
 use std::sync::Mutex;
 
-pub use trace::{Verb, emit_at, emit_cont, emit_inside, emit_quiet, now};
+pub use trace::{Verb, emit_at, emit_cont, emit_inside, emit_quiet};
 
 static OUTPUT_ERROR: Mutex<Option<io::Error>> = Mutex::new(None);
 

@@ -1,4 +1,17 @@
-// Length-prefixed Ethernet frames over TCP (TAP sidecar <-> host stack).
+//! Ethernet frames over TCP, so the stack and the TAP can be on different
+//! machines — or, on macOS, in different kernels.
+//!
+//! TCP is a byte stream with no notion of where one message ends, while a TAP
+//! deals in whole frames. So every frame goes on the wire with its length in
+//! front of it, and comes off the wire the same size it went on:
+//!
+//! ```text
+//! | u32 big-endian length | that many bytes of Ethernet frame |
+//! ```
+//!
+//! Two roles share this file. The *bridge* (`run_bridge`) owns the real TAP and
+//! serves one client at a time; the *host stack* (`TcpFrames`) connects to it
+//! and treats the socket as if it were the TAP.
 
 use std::io::{self, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
@@ -214,13 +227,12 @@ fn exposure_warning(bound: SocketAddr) -> Option<String> {
 /// stacks at once would steal frames from each other at random. The next client
 /// waits in the accept queue. A client hanging up is how a session normally
 /// ends, not an error.
-fn accept_loop(listener: TcpListener, tap: TapInterface) -> io::Result<()> {
+fn accept_loop(listener: TcpListener, mut tap: TapInterface) -> io::Result<()> {
     loop {
         let (stream, peer) = listener.accept()?;
         crate::log::status::info(format!("bridge client {peer}"));
         stream.set_nodelay(true)?;
-        let session = tap.try_clone()?;
-        match pump(session, stream) {
+        match pump(&mut tap, stream) {
             Ok(()) => {}
             Err(e) if client_gone(&e) => {
                 crate::log::status::info(format!("bridge client {peer} closed"));
@@ -230,64 +242,83 @@ fn accept_loop(listener: TcpListener, tap: TapInterface) -> io::Result<()> {
     }
 }
 
-fn pump(tap: TapInterface, stream: TcpStream) -> io::Result<()> {
+/// Carry frames both ways until either side hangs up.
+///
+/// Two threads, because a TAP read and a socket read both block. The reader
+/// gets its own duplicate of the TAP fd; the writer borrows the caller's, so a
+/// session costs one extra descriptor rather than two. The threads are scoped
+/// so that borrow is allowed to cross into them.
+fn pump(tap: &mut TapInterface, stream: TcpStream) -> io::Result<()> {
     let mut tap_read = tap.try_clone()?;
-    let mut tap_write = tap;
     let mut sock_read = stream.try_clone()?;
     let mut sock_write = stream.try_clone()?;
 
     let (wake_r, wake_w) = UnixStream::pair()?;
     wake_r.set_nonblocking(true)?;
 
-    let up = thread::spawn(move || -> io::Result<()> {
-        let mut buf = [0u8; 2048];
-        loop {
-            match poll_tap_or_stop(tap_read.as_raw_fd(), wake_r.as_raw_fd())? {
-                Wake::Stop => return Ok(()),
-                Wake::Tap => {
-                    let n = tap_read.read_frame(&mut buf)?;
-                    if n == 0 {
-                        return Ok(());
+    thread::scope(|scope| {
+        let up = scope.spawn(move || -> io::Result<()> {
+            let mut buf = [0u8; 2048];
+            loop {
+                match poll_tap_or_stop(tap_read.as_raw_fd(), wake_r.as_raw_fd())? {
+                    Wake::Stop => return Ok(()),
+                    Wake::Tap => {
+                        let n = tap_read.read_frame(&mut buf)?;
+                        if n == 0 {
+                            return Ok(());
+                        }
+                        write_record(&mut sock_write, &buf[..n])?;
                     }
-                    write_record(&mut sock_write, &buf[..n])?;
                 }
             }
-        }
-    });
-    let down = thread::spawn(move || -> io::Result<()> {
-        let _wake = wake_w;
-        let mut buf = [0u8; 2048];
-        loop {
-            let n = read_record(&mut sock_read, &mut buf)?;
-            if n == 0 {
-                return Ok(());
+        });
+        let down = scope.spawn(move || -> io::Result<()> {
+            let _wake = wake_w;
+            let mut buf = [0u8; 2048];
+            loop {
+                let n = read_record(&mut sock_read, &mut buf)?;
+                if n == 0 {
+                    return Ok(());
+                }
+                tap.write_frame(&buf[..n])?;
             }
-            tap_write.write_frame(&buf[..n])?;
+        });
+
+        while !up.is_finished() && !down.is_finished() {
+            thread::sleep(Duration::from_millis(20));
         }
-    });
+        let _ = stream.shutdown(Shutdown::Both);
 
-    while !up.is_finished() && !down.is_finished() {
-        thread::sleep(Duration::from_millis(20));
-    }
-    let _ = stream.shutdown(Shutdown::Both);
-
-    let up_res = match up.join() {
-        Ok(r) => r,
-        Err(_) => Err(io::Error::other("bridge tap->sock thread panicked")),
-    };
-    let down_res = match down.join() {
-        Ok(r) => r,
-        Err(_) => Err(io::Error::other("bridge sock->tap thread panicked")),
-    };
-    up_res?;
-    down_res
+        let up_res = match up.join() {
+            Ok(r) => r,
+            Err(_) => Err(io::Error::other("bridge tap->sock thread panicked")),
+        };
+        let down_res = match down.join() {
+            Ok(r) => r,
+            Err(_) => Err(io::Error::other("bridge sock->tap thread panicked")),
+        };
+        up_res?;
+        down_res
+    })
 }
 
+/// Why `poll_tap_or_stop` returned.
 enum Wake {
+    /// The other direction finished; this thread should return too.
     Stop,
+    /// A frame is waiting on the TAP.
     Tap,
 }
 
+/// Block until the TAP has a frame, or until the session ends.
+///
+/// A plain `read` on the TAP would block forever when the client hangs up:
+/// nothing would ever arrive to unblock it, and the thread would sit there
+/// holding a descriptor. So the thread waits on two descriptors at once with
+/// `poll(2)` — the TAP, and one end of a `UnixStream` pair that carries no
+/// data at all. The other end is owned by the socket->TAP thread, and dropping
+/// it when that thread exits closes it. A closed peer shows up here as
+/// `POLLHUP`, which is the "stop now" signal.
 fn poll_tap_or_stop(tap_fd: i32, wake_fd: i32) -> io::Result<Wake> {
     let mut fds = [
         libc::pollfd {
@@ -310,6 +341,8 @@ fn poll_tap_or_stop(tap_fd: i32, wake_fd: i32) -> io::Result<Wake> {
             }
             return Err(err);
         }
+        // The wake pipe is checked first: if both fired, the session is over
+        // and the frame no longer has anywhere to go.
         if fds[1].revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0 {
             return Ok(Wake::Stop);
         }
