@@ -60,7 +60,30 @@ jobs:
         if: needs.classify.outputs.checks == 'true'
       - uses: dtolnay/rust-toolchain@stable
         if: needs.classify.outputs.checks == 'true'
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --check
+        if: needs.classify.outputs.checks == 'true'
+      - run: cargo clippy --all-targets -- -D warnings
+        if: needs.classify.outputs.checks == 'true'
       - run: cargo test
+        if: needs.classify.outputs.checks == 'true'
+
+  macos:
+    name: macos
+    needs: classify
+    runs-on: macos-latest
+    steps:
+      - name: Skip macOS check
+        if: needs.classify.outputs.checks != 'true'
+        run: echo "docs-only; macOS check not required"
+      # minitcp has `#[cfg(target_os = "linux")]` blocks around the TAP device,
+      # so a macOS-only break compiles fine here and ships at release time.
+      - uses: actions/checkout@v4
+        if: needs.classify.outputs.checks == 'true'
+      - uses: dtolnay/rust-toolchain@stable
+        if: needs.classify.outputs.checks == 'true'
+      - run: cargo check --all-targets
         if: needs.classify.outputs.checks == 'true'
 
   build:
@@ -102,22 +125,23 @@ jobs:
 
   status:
     name: status
-    needs: [classify, test, build]
+    needs: [classify, test, macos, build]
     if: always() && !cancelled()
     runs-on: ubuntu-latest
     steps:
-      - name: Require test and build
+      - name: Require test, macos and build
         env:
           TEST: ${{ needs.test.result }}
+          MACOS: ${{ needs.macos.result }}
           BUILD: ${{ needs.build.result }}
         run: |
           set -euo pipefail
-          [ "$TEST" = success ] && [ "$BUILD" = success ]
+          [ "$TEST" = success ] && [ "$MACOS" = success ] && [ "$BUILD" = success ]
 
   release:
     name: release
-    needs: [classify, test, build]
-    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.classify.outputs.checks == 'true' && needs.test.result == 'success' && needs.build.result == 'success' }}
+    needs: [classify, test, macos, build]
+    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.classify.outputs.checks == 'true' && needs.test.result == 'success' && needs.macos.result == 'success' && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     outputs:
       published: ${{ steps.release.outputs.new_release_published }}
@@ -160,7 +184,7 @@ jobs:
           SHA: ${{ steps.changelog.outputs.pull-request-head-sha }}
         run: |
           set -euo pipefail
-          for name in test build "build (linux/amd64)" status; do
+          for name in test macos build "build (linux/amd64)" status; do
             gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
               -f name="$name" \
               -f head_sha="$SHA" \
