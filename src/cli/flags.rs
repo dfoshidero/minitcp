@@ -26,7 +26,38 @@ pub(super) struct Flag {
     pub metavar: Option<&'static str>,
     /// The one line of help shown after the name.
     pub help: &'static str,
+    /// The commands that read this flag. Naming it anywhere else is a typo
+    /// worth saying out loud, since the flag would otherwise do nothing.
+    pub scopes: &'static [Scope],
 }
+
+/// The commands a flag can matter to, grouped by what they read.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Scope {
+    /// `run`, `stack`, `replay FILE` — anything that moves frames.
+    Stack,
+    /// `bridge`.
+    Bridge,
+    /// `tap up`, `tap down`, `tap` .
+    Tap,
+    /// `identity`.
+    Identity,
+    /// `pcap FILE`, which reads nothing but the file.
+    Pcap,
+    /// The setters, which only write minitcp.toml.
+    Config,
+}
+
+/// Every command, so `--config` can say it applies to all of them.
+const ANY: &[Scope] = &[
+    Scope::Stack,
+    Scope::Bridge,
+    Scope::Tap,
+    Scope::Identity,
+    Scope::Pcap,
+    Scope::Config,
+];
+const STACK: &[Scope] = &[Scope::Stack];
 
 pub(super) const FLAGS: &[Flag] = &[
     Flag {
@@ -34,108 +65,126 @@ pub(super) const FLAGS: &[Flag] = &[
         short: None,
         metavar: Some("NAME"),
         help: "which TAP (default: tap0)",
+        scopes: &[Scope::Stack, Scope::Bridge, Scope::Tap],
     },
     Flag {
         name: "--addr",
         short: None,
         metavar: Some("IP"),
         help: "MiniTCP's IPv4 (default: 10.0.0.2)",
+        scopes: &[Scope::Stack, Scope::Identity],
     },
     Flag {
         name: "--mac",
         short: None,
         metavar: Some("MAC"),
         help: "MiniTCP's MAC (default: 02:00:00:00:00:02)",
+        scopes: &[Scope::Stack, Scope::Identity],
     },
     Flag {
         name: "--linux-addr",
         short: None,
         metavar: Some("IP"),
         help: "Linux's IPv4 on that TAP (default: same street, .1)",
+        scopes: &[Scope::Tap],
     },
     Flag {
         name: "--tun",
         short: None,
         metavar: Some("PATH"),
         help: "tun device (default: /dev/net/tun)",
+        scopes: &[Scope::Stack, Scope::Bridge, Scope::Tap],
     },
     Flag {
         name: "--fwd",
         short: None,
         metavar: Some("HOST:PORT"),
         help: "talk to the TAP sidecar over TCP (default: 127.0.0.1:7946)",
+        scopes: STACK,
     },
     Flag {
         name: "--listen",
         short: None,
         metavar: Some("ADDR"),
         help: "bridge listen address (default: 127.0.0.1:7946)",
+        scopes: &[Scope::Bridge],
     },
     Flag {
         name: "--write",
         short: None,
         metavar: Some("FILE"),
         help: "also save frames to a pcap",
+        scopes: STACK,
     },
     Flag {
         name: "--config",
         short: None,
         metavar: Some("FILE"),
         help: "TOML instead of ./minitcp.toml",
+        scopes: ANY,
     },
     Flag {
         name: "--drop",
         short: None,
         metavar: Some("arp|icmp|ip"),
         help: "ignore that kind of frame (comma-ok: arp,icmp)",
+        scopes: STACK,
     },
     Flag {
         name: "--drop-pct",
         short: None,
         metavar: Some("N"),
         help: "drop N percent of frames at random (0-100)",
+        scopes: STACK,
     },
     Flag {
         name: "--ttl",
         short: None,
         metavar: Some("N"),
         help: "hop count on MiniTCP's IPv4 replies (default: 64)",
+        scopes: STACK,
     },
     Flag {
         name: "--id",
         short: None,
         metavar: Some("N"),
         help: "ICMP echo id on replies (default: copy from request)",
+        scopes: STACK,
     },
     Flag {
         name: "--count",
         short: Some("-c"),
         metavar: Some("N"),
         help: "stop after N frames (stack/replay)",
+        scopes: STACK,
     },
     Flag {
         name: "--quiet",
         short: Some("-q"),
         metavar: None,
         help: "one line per exchange",
+        scopes: STACK,
     },
     Flag {
         name: "--hex",
         short: None,
         metavar: None,
         help: "read frames as hex on stdin",
+        scopes: STACK,
     },
     Flag {
         name: "--once",
         short: None,
         metavar: None,
         help: "stop after one frame (same as --count 1)",
+        scopes: STACK,
     },
     Flag {
         name: "--offline",
         short: None,
         metavar: None,
         help: "don't check GitHub for a newer minitcp",
+        scopes: ANY,
     },
 ];
 
@@ -150,6 +199,12 @@ pub(super) fn lookup(flag: &str) -> Option<&'static Flag> {
 /// one name per flag.
 pub(super) fn canonical(flag: &str) -> &str {
     lookup(flag).map_or(flag, |f| f.name)
+}
+
+/// Does this flag reach the given command? Unknown flags are somebody else's
+/// error, so they pass.
+pub(super) fn applies(flag: &str, scope: Scope) -> bool {
+    lookup(flag).is_none_or(|f| f.scopes.contains(&scope))
 }
 
 /// Does this flag consume the word after it? Argv walking needs to know before

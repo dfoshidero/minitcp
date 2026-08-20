@@ -10,7 +10,9 @@ mod usage;
 
 use std::path::{Path, PathBuf};
 
-pub use command::{Command, HelpTopic};
+pub use command::Command;
+#[cfg(test)]
+use command::HelpTopic;
 pub use error::ParseError;
 pub use options::{Config, DEFAULT_CONFIG, DropKind, Transport};
 pub use usage::usage_topic;
@@ -27,6 +29,54 @@ fn is_setter(command: &Command) -> bool {
             | Command::IdentitySetAddr(_)
             | Command::IdentitySetMac(_)
     )
+}
+
+/// Flags argv named that this command never reads. Warned about rather than
+/// refused: a stale `--ttl` should not stop `tap up` from bringing a TAP up.
+fn inert_flags(command: &Command, given: &[&'static str]) -> Vec<String> {
+    let scope = command.scope();
+    let mut inert: Vec<&str> = given
+        .iter()
+        .copied()
+        .filter(|flag| !flags::applies(flag, scope))
+        .collect();
+    inert.dedup();
+    if inert.is_empty() {
+        return Vec::new();
+    }
+    let named = if inert.len() == 2 {
+        inert.join(" and ")
+    } else {
+        inert.join(", ")
+    };
+    vec![format!(
+        "{named} {} no effect on `{}`",
+        if inert.len() == 1 { "has" } else { "have" },
+        command.label()
+    )]
+}
+
+/// Frames reach the stack from exactly one place. Naming two is refused here
+/// rather than in `run_stack`, which would otherwise silently honour whichever
+/// source it happens to test first.
+fn one_frame_source(command: &Command, cli: &Partial) -> Result<(), ParseError> {
+    let mut named = Vec::new();
+    if matches!(command, Command::Replay(_)) {
+        named.push("replay FILE");
+    }
+    if cli.hex == Some(true) {
+        named.push("--hex");
+    }
+    if cli.fwd.is_some() {
+        named.push("--fwd");
+    }
+    if named.len() > 1 {
+        return Err(ParseError::msg(format!(
+            "{} name where frames come from; pick one",
+            named.join(" and ")
+        )));
+    }
+    Ok(())
 }
 
 /// Parse argv without the program name. `cwd` is where `./minitcp.toml` is sought.
@@ -68,7 +118,9 @@ pub fn parse_from(args: &[String], cwd: &Path) -> Result<Config, ParseError> {
         cfg.linux_addr = default_linux_addr(cfg.addr);
     }
     cfg.config_path = config_path;
-    cfg.command = cli.command.unwrap_or(Command::Run);
+    cfg.command = cli.command.clone().unwrap_or(Command::Run);
+    one_frame_source(&cfg.command, &cli)?;
+    cfg.warnings = inert_flags(&cfg.command, &cli.given);
     Ok(cfg)
 }
 

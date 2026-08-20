@@ -244,6 +244,7 @@ fn read_record(file: &mut File, buffer: &mut [u8]) -> io::Result<usize> {
 mod tests {
     use super::*;
     use std::fs;
+    use std::sync::atomic::{AtomicU32, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     const ARP_FRAME: [u8; 42] = [
@@ -252,12 +253,16 @@ mod tests {
         0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0a, 0x00, 0x00, 0x02,
     ];
 
+    /// A path no other test can be holding. The clock alone is not enough:
+    /// tests run in parallel and two of them can read the same nanosecond.
     fn unique_pcap() -> std::path::PathBuf {
+        static NEXT: AtomicU32 = AtomicU32::new(0);
         let n = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir().join(format!("minitcp-{n}.pcap"))
+        let seq = NEXT.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!("minitcp-{n}-{seq}.pcap"))
     }
 
     #[test]

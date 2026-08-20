@@ -73,7 +73,7 @@ fn trace_arp_request(when: &str, macs: &str, addrs: Option<(Ipv4Addr, Ipv4Addr)>
 }
 
 pub(super) fn handle_frame(cfg: &Config, bytes: &[u8], rng: &mut SeededRng) -> Option<Vec<u8>> {
-    let verbose = cfg.verbose();
+    let verbose = cfg.verbose;
     let our_ip = cfg.addr;
     let our_mac = cfg.mac;
     let when = log::now();

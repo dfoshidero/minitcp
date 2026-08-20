@@ -26,14 +26,6 @@ impl ParseError {
         }
     }
 
-    /// Family help only — no `error:` prefix.
-    pub(crate) fn usage_only(usage: impl Into<String>) -> Self {
-        Self {
-            message: String::new(),
-            usage: Some(usage.into()),
-        }
-    }
-
     pub fn report(&self) -> String {
         match (&self.message.is_empty(), &self.usage) {
             (true, Some(usage)) => format!("{usage}\n"),

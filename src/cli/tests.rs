@@ -41,7 +41,7 @@ fn defaults_match_the_lab() {
     assert_eq!(cfg.addr, Ipv4Addr::new(10, 0, 0, 2));
     assert_eq!(cfg.mac, OUR_MAC);
     assert_eq!(cfg.linux_addr, Ipv4Addr::new(10, 0, 0, 1));
-    assert!(!cfg.quiet);
+    assert!(cfg.verbose);
     assert!(cfg.drop.is_empty());
     assert_eq!(cfg.ttl, 64);
 }
@@ -54,13 +54,13 @@ fn flags_can_sit_before_or_after_stack() {
     assert_eq!(after.command, Command::Stack);
     assert_eq!(before.iface, "tap1");
     assert_eq!(after.iface, "tap1");
-    assert!(before.quiet && after.quiet);
+    assert!(!before.verbose && !after.verbose);
 }
 
 #[test]
 fn quiet_and_once_are_flags() {
     let q = parse_ok(&["--quiet"]);
-    assert!(q.quiet);
+    assert!(!q.verbose);
     let once = parse_ok(&["stack", "--once"]);
     assert_eq!(once.count, Some(1));
     let count = parse_ok(&["-c", "3"]);
@@ -142,7 +142,7 @@ fn toml_sets_addr_and_cli_wins() {
     )
     .unwrap();
     assert_eq!(from_file.addr, Ipv4Addr::new(10, 0, 0, 9));
-    assert!(from_file.quiet);
+    assert!(!from_file.verbose);
 
     let overridden = parse_from(
         &args(&[
@@ -155,7 +155,7 @@ fn toml_sets_addr_and_cli_wins() {
     )
     .unwrap();
     assert_eq!(overridden.addr, Ipv4Addr::new(10, 0, 0, 4));
-    assert!(overridden.quiet);
+    assert!(!overridden.verbose);
     let _ = fs::remove_dir_all(dir);
 }
 
@@ -193,20 +193,70 @@ fn tap_family_parses() {
         parse_ok(&["tap", "--help"]).command,
         Command::Help(HelpTopic::Tap)
     );
+    // A bad subcommand says what was wrong before it shows the family usage.
     let err = parse_err(&["tap", "nope"]);
+    assert!(
+        err.contains("error: unknown tap subcommand 'nope'"),
+        "{err}"
+    );
     assert!(err.contains("usage: minitcp tap"), "{err}");
-    assert!(!err.contains("needs a value"), "{err}");
-    assert!(!err.contains("error:"), "{err}");
     let set = parse_ok(&["tap", "addr", "10.0.0.9"]);
     assert_eq!(set.command, Command::TapSetAddr(Ipv4Addr::new(10, 0, 0, 9)));
+}
+
+#[test]
+fn a_missing_argument_says_what_was_missing() {
+    for (argv, want) in [
+        (vec!["pcap"], "pcap needs a FILE"),
+        (vec!["tap", "iface"], "tap iface needs a NAME"),
+        (vec!["tap", "addr"], "tap addr needs an IP"),
+        (vec!["identity", "mac"], "identity mac needs a MAC"),
+    ] {
+        let err = parse_err(&argv);
+        assert!(err.contains(want), "{argv:?}: {err}");
+    }
+}
+
+#[test]
+fn two_frame_sources_are_refused() {
+    for argv in [
+        vec!["replay", "in.pcap", "--hex"],
+        vec!["replay", "in.pcap", "--fwd", "127.0.0.1:7946"],
+        vec!["--hex", "--fwd", "127.0.0.1:7946"],
+    ] {
+        let err = parse_err(&argv);
+        assert!(err.contains("where frames come from"), "{argv:?}: {err}");
+    }
+    // One source at a time is still fine.
+    parse_ok(&["--hex"]);
+    parse_ok(&["--fwd", "127.0.0.1:7946"]);
+    parse_ok(&["replay", "in.pcap"]);
+}
+
+#[test]
+fn flags_the_command_never_reads_are_warned_about() {
+    // Warned about, not refused: the command still has to work.
+    let cfg = parse_ok(&["tap", "up", "--ttl", "3"]);
+    assert_eq!(cfg.warnings, vec!["--ttl has no effect on `tap up`"]);
+    assert_eq!(cfg.ttl, 3);
+    // --iface reaches `tap up`, and --config reaches everything.
+    assert!(
+        parse_ok(&["tap", "up", "--iface", "tap1"])
+            .warnings
+            .is_empty()
+    );
+    assert!(
+        parse_ok(&["identity", "--addr", "10.0.0.9"])
+            .warnings
+            .is_empty()
+    );
+    assert!(parse_ok(&["--ttl", "3"]).warnings.is_empty());
 }
 
 #[test]
 fn pcap_and_replay_parse() {
     let cfg = parse_ok(&["pcap", "out.pcap"]);
     assert_eq!(cfg.command, Command::Pcap(PathBuf::from("out.pcap")));
-    let alias = parse_ok(&["pcap-info", "out.pcap"]);
-    assert_eq!(alias.command, Command::Pcap(PathBuf::from("out.pcap")));
     let err = parse_err(&["pcap"]);
     assert!(err.contains("usage: minitcp pcap FILE"), "{err}");
     assert!(!err.contains("needs a value"), "{err}");

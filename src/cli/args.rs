@@ -72,6 +72,9 @@ pub(crate) fn parse_cli(args: &[String]) -> Result<Partial, ParseError> {
                 continue;
             }
             let name = flags::canonical(arg);
+            if let Some(known) = flags::lookup(name) {
+                partial.given.push(known.name);
+            }
             let value = if flags::takes_value(name) {
                 Some(take_value(args, &mut i, arg)?)
             } else {
@@ -93,17 +96,22 @@ pub(crate) fn parse_cli(args: &[String]) -> Result<Partial, ParseError> {
                 })?;
                 set_command(&mut partial, Command::Replay(PathBuf::from(file)))?;
             }
-            "pcap" | "pcap-info" => {
+            "pcap" => {
                 family = Family::Pcap;
                 match peek(args, i) {
-                    None => return Err(ParseError::usage_only(USAGE_PCAP)),
+                    None => {
+                        return Err(ParseError::with_usage("pcap needs a FILE", USAGE_PCAP));
+                    }
                     Some(next) if is_help(next) => {}
                     Some(next) if next.starts_with('-') => {
-                        return Err(ParseError::usage_only(USAGE_PCAP));
+                        return Err(ParseError::with_usage(
+                            format!("pcap needs a FILE, not the flag '{next}'"),
+                            USAGE_PCAP,
+                        ));
                     }
                     Some(_) => {
                         let file = take_value(args, &mut i, "pcap")
-                            .map_err(|_| ParseError::usage_only(USAGE_PCAP))?;
+                            .map_err(|_| ParseError::with_usage("pcap needs a FILE", USAGE_PCAP))?;
                         set_command(&mut partial, Command::Pcap(PathBuf::from(file)))?;
                     }
                 }
@@ -144,25 +152,28 @@ fn parse_tap(args: &[String], i: &mut usize, partial: &mut Partial) -> Result<()
         }
         Some("iface") => {
             *i += 1;
-            let name =
-                take_value(args, i, "tap iface").map_err(|_| ParseError::usage_only(USAGE_TAP))?;
+            let name = take_value(args, i, "tap iface")
+                .map_err(|_| ParseError::with_usage("tap iface needs a NAME", USAGE_TAP))?;
             set_command(partial, Command::TapSetIface(name.to_string()))
         }
         Some("addr") => {
             *i += 1;
-            let ip =
-                take_value(args, i, "tap addr").map_err(|_| ParseError::usage_only(USAGE_TAP))?;
+            let ip = take_value(args, i, "tap addr")
+                .map_err(|_| ParseError::with_usage("tap addr needs an IP", USAGE_TAP))?;
             set_command(partial, Command::TapSetAddr(parse_ipv4(ip)?))
         }
         Some("tun") => {
             *i += 1;
-            let path =
-                take_value(args, i, "tap tun").map_err(|_| ParseError::usage_only(USAGE_TAP))?;
+            let path = take_value(args, i, "tap tun")
+                .map_err(|_| ParseError::with_usage("tap tun needs a PATH", USAGE_TAP))?;
             set_command(partial, Command::TapSetTun(PathBuf::from(path)))
         }
-        Some(_) => {
+        Some(other) => {
             *i += 1;
-            Err(ParseError::usage_only(USAGE_TAP))
+            Err(ParseError::with_usage(
+                format!("unknown tap subcommand '{other}'"),
+                USAGE_TAP,
+            ))
         }
     }
 }
@@ -175,21 +186,24 @@ fn parse_identity(args: &[String], i: &mut usize, partial: &mut Partial) -> Resu
         Some("addr") => {
             *i += 1;
             let ip = take_value(args, i, "identity addr")
-                .map_err(|_| ParseError::usage_only(USAGE_IDENTITY))?;
+                .map_err(|_| ParseError::with_usage("identity addr needs an IP", USAGE_IDENTITY))?;
             set_command(partial, Command::IdentitySetAddr(parse_ipv4(ip)?))
         }
         Some("mac") => {
             *i += 1;
             let mac = take_value(args, i, "identity mac")
-                .map_err(|_| ParseError::usage_only(USAGE_IDENTITY))?;
+                .map_err(|_| ParseError::with_usage("identity mac needs a MAC", USAGE_IDENTITY))?;
             set_command(
                 partial,
                 Command::IdentitySetMac(parse_mac(mac).map_err(ParseError::msg)?),
             )
         }
-        Some(_) => {
+        Some(other) => {
             *i += 1;
-            Err(ParseError::usage_only(USAGE_IDENTITY))
+            Err(ParseError::with_usage(
+                format!("unknown identity subcommand '{other}'"),
+                USAGE_IDENTITY,
+            ))
         }
     }
 }

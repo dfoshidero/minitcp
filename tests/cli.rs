@@ -262,16 +262,15 @@ fn help_word_and_flag_agree() {
     assert_eq!(run(&["-h"]).all(), run(&["--help"]).all());
 }
 
-/// Pins the *current* routing. `--help` is output the user asked for, so it
-/// arguably belongs on stdout; this test exists so that moving it is a visible,
-/// deliberate edit rather than a silent side effect of a refactor.
+/// Help was asked for, so it is the result: stdout, exit 0, pipeable.
 #[test]
-fn help_currently_goes_to_stderr() {
+fn help_goes_to_stdout() {
     let out = run(&["--help"]);
+    assert_eq!(out.code, 0, "{}", out.dump("--help should succeed"));
     assert!(
-        out.stdout.is_empty() && !out.stderr.is_empty(),
+        !out.stdout.is_empty() && out.stderr.is_empty(),
         "{}",
-        out.dump("help currently goes to stderr")
+        out.dump("help belongs on stdout")
     );
 }
 
@@ -591,16 +590,38 @@ fn tap_show_reports_iface_addr_and_tun() {
     }
 }
 
-/// Pins the current behaviour: `tap` with no subcommand appends the entire
-/// `minitcp tap` usage block after the status. That is noise for someone who
-/// only asked what the settings are.
+/// `tap` with no subcommand answers what the settings are. It is not an error
+/// and not a help request, so it says that and stops.
 #[test]
-fn tap_show_currently_also_dumps_the_usage_block() {
-    let out = run(&["tap"]);
+fn a_flag_the_command_cannot_use_warns_but_still_runs() {
+    let out = run(&["identity", "--ttl", "3", "--drop", "icmp", "--offline"]);
+    assert_eq!(out.code, 0, "{}", out.dump("identity with stray flags"));
     assert!(
-        out.all().contains("usage: minitcp tap"),
+        out.stdout.contains("addr"),
         "{}",
-        out.dump("tap show currently appends usage")
+        out.dump("identity still reports")
+    );
+    assert!(
+        out.stderr
+            .contains("--ttl and --drop have no effect on `identity`"),
+        "{}",
+        out.dump("stray flags are named on stderr")
+    );
+}
+
+#[test]
+fn tap_show_reports_settings_on_stdout_without_a_help_page() {
+    let out = run(&["tap"]);
+    assert_eq!(out.code, 0, "{}", out.dump("tap show"));
+    assert!(
+        out.stderr.is_empty(),
+        "{}",
+        out.dump("tap show belongs on stdout")
+    );
+    assert!(
+        !out.stdout.contains("usage: minitcp tap"),
+        "{}",
+        out.dump("tap show should not append a usage block")
     );
 }
 

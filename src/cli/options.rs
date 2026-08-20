@@ -62,7 +62,9 @@ pub struct Config {
     pub tun: PathBuf,
     pub write: Option<PathBuf>,
     pub hex: bool,
-    pub quiet: bool,
+    /// Narrate every layer of every frame. `--quiet` turns it off; the field
+    /// is named for the mode it selects so no call site has to read a negation.
+    pub verbose: bool,
     pub count: Option<u64>,
     pub drop: Vec<DropKind>,
     pub drop_pct: u8,
@@ -72,6 +74,8 @@ pub struct Config {
     pub listen: String,
     pub offline: bool,
     pub config_path: PathBuf,
+    /// Notes from parsing that dispatch prints before it does the work.
+    pub warnings: Vec<String>,
 }
 
 impl Config {
@@ -86,7 +90,7 @@ impl Config {
             tun: PathBuf::from(DEFAULT_TUN),
             write: None,
             hex: false,
-            quiet: false,
+            verbose: true,
             count: None,
             drop: Vec::new(),
             drop_pct: 0,
@@ -96,11 +100,8 @@ impl Config {
             listen: crate::interface::fwd::DEFAULT_LISTEN.into(),
             offline: false,
             config_path: PathBuf::from(DEFAULT_CONFIG),
+            warnings: Vec::new(),
         }
-    }
-
-    pub fn verbose(&self) -> bool {
-        !self.quiet
     }
 
     /// Decide how Ethernet frames will reach this stack.
@@ -207,6 +208,10 @@ pub(crate) struct Partial {
     pub fwd: Option<String>,
     pub listen: Option<String>,
     pub offline: Option<bool>,
+    /// The flags argv actually named, canonical spelling, in the order given.
+    /// Only the command line fills this in: a key in minitcp.toml applies to
+    /// every command, so it is not the user saying it here and now.
+    pub given: Vec<&'static str>,
 }
 
 pub fn default_linux_addr(addr: Ipv4Addr) -> Ipv4Addr {
@@ -237,7 +242,7 @@ pub(crate) fn apply_partial(base: &mut Config, over: &Partial) {
         base.hex = v;
     }
     if let Some(v) = over.quiet {
-        base.quiet = v;
+        base.verbose = !v;
     }
     if let Some(v) = over.count {
         base.count = Some(v);
