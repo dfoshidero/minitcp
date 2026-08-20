@@ -3,11 +3,9 @@
 //   trace   the frame-by-frame protocol narration, on stdout
 //   status  minitcp talking about itself, on stderr
 //
-// The split matters: stdout is the program's result and stderr is commentary,
-// so `minitcp stack > run.log` gives a clean log and still shows problems on
-// the terminal. A broken pipe on stdout is normal (`| head`), so protocol
-// writes stash their error here instead of panicking, and the run loop decides
-// what to make of it.
+// stdout is the result, stderr is commentary, so `minitcp stack > run.log`
+// gives a clean log and still shows problems. A broken pipe on stdout is normal
+// (`| head`), so protocol writes stash their error here rather than panic.
 
 pub mod status;
 pub mod trace;
@@ -54,10 +52,8 @@ pub fn write_stderr(text: &str) -> io::Result<()> {
     stderr.flush()
 }
 
-/// Wall-clock time as HH:MM:SS, in the machine's local timezone.
-///
-/// libc rather than a date crate: this is the only time formatting minitcp
-/// does, and `localtime_r` is exactly the call a C program would make.
+/// Wall-clock time as HH:MM:SS, local. libc rather than a date crate — this is
+/// the only time formatting minitcp does.
 pub(crate) fn timestamp() -> String {
     let mut ts = libc::timespec {
         tv_sec: 0,

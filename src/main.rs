@@ -20,13 +20,9 @@ mod stack;
 mod sys;
 mod tui;
 
-/// Why minitcp is about to exit non-zero.
-///
-/// The three cases exist because they mean different things to whoever ran the
-/// command: a usage error is the command line's fault and exits 2, a config
-/// error is the file's fault, and a runtime error is the world's. A broken pipe
-/// is deliberately none of them — `minitcp stack | head` is a normal way to use
-/// the tool and must not look like a failure.
+/// Why minitcp is about to exit non-zero: the command line's fault (exit 2),
+/// the config file's fault, or the world's. A broken pipe is none of them —
+/// `minitcp stack | head` is a normal way to use the tool.
 enum AppError {
     Usage(cli::ParseError),
     Config(cli::ParseError),

@@ -1,9 +1,7 @@
 // What a bad command line produces.
 //
-// A `ParseError` carries two things: what was wrong, and the smallest piece of
-// usage text that would have prevented it. Full `--help` is reserved for
-// someone who actually asked for it — answering "you forgot a value for --ttl"
-// with sixty lines of help buries the answer.
+// A `ParseError` carries what was wrong and the smallest piece of usage text
+// that would have prevented it. Full `--help` is for people who asked for it.
 
 use super::usage::{TRY_HELP, flag_usage};
 

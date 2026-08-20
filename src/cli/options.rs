@@ -1,10 +1,9 @@
 // Everything a run of minitcp is configured by, and where each value came from.
 //
 // Three layers, lowest first: built-in defaults, then minitcp.toml, then the
-// command line. `Partial` is one layer with holes in it — every field optional,
-// so "not mentioned" is distinguishable from "set to the default" — and
-// `apply_partial` lays one over another. That is the whole precedence rule, in
-// one place, rather than scattered `unwrap_or` calls at each use site.
+// command line. `Partial` is one layer with holes in it, so "not mentioned" is
+// distinguishable from "set to the default", and `apply_partial` lays one over
+// another. That is the whole precedence rule, in one place.
 
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
@@ -42,17 +41,14 @@ impl DropKind {
     }
 }
 
-/// How Ethernet frames reach the stack.
-///
-/// Only two things can be at the other end of the stack's read loop, and which
-/// one it is changes far more than the transport: it decides where the TAP
-/// lives, and therefore which kernel can see the traffic at all.
+/// How Ethernet frames reach the stack. This decides where the TAP lives, and
+/// so which kernel can see the traffic at all.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Transport {
     /// A TAP device on this machine, read through `/dev/net/tun`.
     LocalTap,
     /// Frames relayed over TCP from a bridge that owns the TAP — normally the
-    /// sidecar container, since only Linux can create a TAP at all.
+    /// sidecar, since only Linux can create a TAP.
     Forwarded(String),
 }
 
@@ -80,7 +76,7 @@ pub struct Config {
 
 impl Config {
     pub fn defaults() -> Self {
-        let addr = Ipv4Addr::from(OUR_IP);
+        let addr = OUR_IP;
         Self {
             command: Command::Run,
             iface: DEFAULT_IFACE.into(),
@@ -103,30 +99,22 @@ impl Config {
         }
     }
 
-    pub fn our_ip_bytes(&self) -> [u8; 4] {
-        self.addr.octets()
-    }
-
     pub fn verbose(&self) -> bool {
         !self.quiet
     }
 
     /// Decide how Ethernet frames will reach this stack.
     ///
-    /// This looks at the filesystem, so it is deliberately a *decision* rather
-    /// than a getter: it is meant to be called once, early, and the answer
-    /// carried around. Calling it repeatedly invites two parts of the program
-    /// to reach different conclusions if `/dev/net/tun` appears or disappears
-    /// underneath them — which is exactly what happens when someone runs
-    /// `minitcp tap up` in another terminal.
+    /// A decision, not a getter: it reads the filesystem, so call it once and
+    /// carry the answer. `/dev/net/tun` can appear underneath a running program
+    /// — that is what `minitcp tap up` in another terminal does.
     pub fn transport(&self) -> Transport {
         // An explicit --fwd is an instruction, not a hint, so it wins outright.
         if let Some(addr) = &self.fwd {
             return Transport::Forwarded(addr.clone());
         }
-        // Otherwise: if this kernel can give us a TAP, use it directly. If it
-        // cannot — macOS, or a container without the tun device — the only way
-        // to reach one is the sidecar.
+        // Otherwise use a TAP directly if this kernel can give us one; if not
+        // (macOS, or no tun device), the sidecar is the only way to reach one.
         if self.tun.exists() {
             Transport::LocalTap
         } else {
@@ -303,9 +291,8 @@ mod tests {
 
     #[test]
     fn no_tun_device_means_the_sidecar() {
-        // This is the macOS case, and the container-without-/dev/net/tun case:
-        // this kernel cannot make a TAP, so the only way to reach one is over
-        // TCP from a machine that can.
+        // macOS, or a container without /dev/net/tun: no TAP here, so the only
+        // way to reach one is over TCP.
         let mut cfg = Config::defaults();
         cfg.fwd = None;
         cfg.tun = PathBuf::from("/definitely/not/a/real/device");

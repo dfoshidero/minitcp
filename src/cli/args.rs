@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 use super::command::{Command, HelpTopic};
 use super::error::{ParseError, missing_value};
-use super::flags::{apply_flag, parse_count, parse_ipv4, parse_mac};
+use super::flags::{self, apply_flag, parse_ipv4, parse_mac};
 use super::options::Partial;
 use super::usage::{USAGE_COMMANDS, USAGE_IDENTITY, USAGE_PCAP, USAGE_REPLAY, USAGE_TAP};
 
@@ -64,26 +64,20 @@ pub(crate) fn parse_cli(args: &[String]) -> Result<Partial, ParseError> {
             continue;
         }
         if arg.starts_with('-') {
-            match arg {
-                "-q" | "--quiet" => partial.quiet = Some(true),
-                "-V" | "--version" => set_command(&mut partial, Command::Version)?,
-                "--hex" => partial.hex = Some(true),
-                "--offline" => partial.offline = Some(true),
-                "--once" => partial.count = Some(1),
-                "-c" | "--count" => {
-                    let v = take_value(args, &mut i, arg)?;
-                    partial.count = Some(parse_count(v)?);
-                }
-                "--iface" | "--addr" | "--mac" | "--linux-addr" | "--tun" | "--write"
-                | "--config" | "--drop" | "--drop-pct" | "--ttl" | "--id" | "--fwd"
-                | "--listen" => {
-                    let v = take_value(args, &mut i, arg)?;
-                    apply_flag(&mut partial, arg, Some(v))?;
-                }
-                other => {
-                    return Err(ParseError::msg(format!("unknown flag '{other}'")));
-                }
+            // `--version` is a command rather than an option, so it is the one
+            // dash-word the flag table does not describe.
+            if arg == "-V" || arg == "--version" {
+                set_command(&mut partial, Command::Version)?;
+                i += 1;
+                continue;
             }
+            let name = flags::canonical(arg);
+            let value = if flags::takes_value(name) {
+                Some(take_value(args, &mut i, arg)?)
+            } else {
+                None
+            };
+            apply_flag(&mut partial, name, value)?;
             i += 1;
             continue;
         }

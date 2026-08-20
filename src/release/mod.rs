@@ -5,13 +5,14 @@ use std::time::{Duration, SystemTime};
 
 /// How long a *successful* check is trusted for.
 const CACHE_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
-/// How long to wait after a check that never got an answer.
-///
-/// Much shorter, because the usual cause is a laptop that was offline for a
-/// minute. Waiting a full day to find out about an update because of one
-/// failed request would be a silly thing to do to somebody.
+/// How long to wait after a check that never got an answer — much shorter,
+/// since the usual cause is a laptop that was briefly offline.
 const RETRY_AFTER: Duration = Duration::from_secs(60 * 60);
-const REPO: &str = "dfoshidero/minitcp";
+pub const REPO: &str = "dfoshidero/minitcp";
+
+/// The one-liner the README, `--help` and the update nag all point at.
+pub const INSTALL_URL: &str =
+    "https://github.com/dfoshidero/minitcp/releases/latest/download/install.sh";
 
 pub fn nag_if_outdated() {
     if std::env::var_os("MINITCP_NO_UPDATE_CHECK").is_some() {
@@ -23,11 +24,9 @@ pub fn nag_if_outdated() {
     if recently_checked() {
         return;
     }
-    // Record the attempt *before* making it, not after. If the network is
-    // unreachable the request costs a two-second timeout, and a user with no
-    // connection would otherwise pay that on every single command. Recording
-    // it pessimistically also means a crash or a Ctrl-C mid-request still
-    // counts as an attempt.
+    // Record the attempt before making it: an unreachable network costs a
+    // two-second timeout, which nobody should pay on every command. It also
+    // means a crash mid-request still counts as an attempt.
     mark_checked(Outcome::Failed);
     let Some(latest) = fetch_latest() else {
         return;
@@ -39,9 +38,7 @@ pub fn nag_if_outdated() {
         crate::log::status::info(format!(
             "minitcp {latest} is available (you have {current})"
         ));
-        crate::log::status::info(format!(
-            "Update: curl -fsSL https://github.com/{REPO}/releases/latest/download/install.sh | sh"
-        ));
+        crate::log::status::info(format!("Update: curl -fsSL {INSTALL_URL} | sh"));
     }
 }
 
@@ -94,11 +91,8 @@ impl Outcome {
     }
 }
 
-/// Have we checked recently enough to leave it alone this time?
-///
-/// Every branch here answers "no" on any doubt — a missing cache directory, an
-/// unreadable file, a clock that has gone backwards. Checking again is free;
-/// silently never telling anyone about an update is not.
+/// Have we checked recently enough to leave it alone? Every branch answers
+/// "no" on any doubt — checking again is free, never checking is not.
 fn recently_checked() -> bool {
     let Some(path) = cache_path() else {
         return false;
@@ -166,6 +160,11 @@ fn parse_semver(s: &str) -> (u64, u64, u64) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_install_url_points_at_this_repo() {
+        assert!(INSTALL_URL.contains(REPO), "{INSTALL_URL}");
+    }
+
     use super::*;
 
     #[test]
@@ -190,9 +189,8 @@ mod tests {
 
     #[test]
     fn an_unreadable_marker_is_treated_as_a_failed_check() {
-        // Old versions wrote an empty file, and a truncated write can leave
-        // anything at all. Assuming failure means we re-check sooner, which is
-        // the harmless direction to be wrong in.
+        // Old versions wrote an empty file. Assuming failure re-checks sooner,
+        // which is the harmless direction to be wrong in.
         assert!(Outcome::from_marker(b"") == Outcome::Failed);
         assert!(Outcome::from_marker(b"\xff\xfe") == Outcome::Failed);
     }

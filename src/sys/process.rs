@@ -1,9 +1,8 @@
 // Running other programs.
 //
-// minitcp shells out to `ip`, `sudo`, `docker` and `tcpdump`. Every one of
-// those calls goes through this module so that the awkward parts are solved
-// once: no child may hang forever, no child may inherit our terminal, no child
-// may flood us with output, and every child speaks the same language we parse.
+// minitcp shells out to `ip`, `sudo`, `docker` and `tcpdump`. Every such call
+// goes through here, so the awkward parts are solved once: no child hangs
+// forever, steals the terminal, floods us, or speaks an unexpected language.
 
 use std::io::{self, Read};
 use std::os::unix::process::CommandExt;
@@ -14,12 +13,9 @@ use std::time::{Duration, Instant};
 const DEFAULT_COMMAND_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_COMMAND_OUTPUT: usize = 1024 * 1024;
 
-/// A failure we are willing to treat as success, because it means the thing we
-/// asked for was already true.
-///
-/// Bringing a TAP up is meant to be idempotent: running `minitcp tap up` twice
-/// should not be an error. `ip` has no "create it if missing" flag, so we ask
-/// unconditionally and forgive the specific complaint that says "already done".
+/// A failure worth treating as success, because the thing we asked for was
+/// already true. `ip` has no "create if missing" flag, so `minitcp tap up`
+/// asks unconditionally and forgives the "already done" complaint.
 #[derive(Clone, Copy)]
 pub enum AllowedFailure {
     None,
@@ -36,18 +32,11 @@ pub fn run_checked(program: &str, args: &[&str], allowed: AllowedFailure) -> io:
     )
 }
 
-/// Run `sudo` without ever letting it ask for a password.
+/// Run `sudo` without ever letting it prompt.
 ///
-/// `-n` ("non-interactive") tells sudo to fail rather than prompt. That is not
-/// a restriction we are adding — we already give every child a closed stdin, so
-/// a prompt could never be answered anyway. Without `-n` the user sees sudo's
-/// raw "no tty present and no askpass program specified", which reads like a
-/// bug in minitcp. With `-n` we can recognise the refusal and say what to do
-/// about it.
-///
-/// In the dev container sudo is configured NOPASSWD, so this always succeeds
-/// there. On a normal Linux host it succeeds if the user has recently
-/// authenticated (`sudo -v`), and otherwise explains itself.
+/// Every child gets a closed stdin, so a prompt could not be answered anyway.
+/// `-n` turns that into a refusal we can recognise and explain, instead of
+/// sudo's raw "no tty present", which reads like a bug in minitcp.
 pub fn run_sudo(args: &[&str], allowed: AllowedFailure) -> io::Result<()> {
     let full: Vec<&str> = std::iter::once("-n").chain(args.iter().copied()).collect();
     run_checked("sudo", &full, allowed).map_err(|error| explain_sudo_failure(args, error))
@@ -66,8 +55,8 @@ fn explain_sudo_failure(args: &[&str], error: io::Error) -> io::Error {
         );
     }
     let detail = error.to_string().to_ascii_lowercase();
-    // These are sudo's own words. We force the C locale on every child (see
-    // `output_timeout`) so matching English here is safe.
+    // sudo's own words. Matching English is safe because `output_timeout`
+    // pins every child to the C locale.
     let needs_password = detail.contains("password is required")
         || detail.contains("no tty present")
         || detail.contains("askpass");
@@ -131,21 +120,10 @@ pub fn check_output(
 
 /// Run a program to completion, with a hard time limit.
 ///
-/// Four deliberate choices here, each protecting against a way a child process
-/// can ruin an interactive tool:
-///
-///   * **C locale** — we read `ip` and `sudo` error messages to decide whether
-///     a failure was harmless. Those messages are translated on many systems,
-///     so `ip` on a German host says "Die Datei existiert bereits" and our
-///     English matching silently stops working. Pinning the locale makes the
-///     output we parse the same everywhere.
-///   * **closed stdin** — a child that decides to prompt gets EOF instead of
-///     stealing the terminal from under the TUI.
-///   * **its own process group** — `sudo` and `docker` spawn helpers, so
-///     killing just the process we spawned can leave those helpers running.
-///     On timeout we signal the whole group.
-///   * **a timeout at all** — `docker` in particular can block indefinitely on
-///     an unreachable daemon.
+///   * **C locale** — we read `ip` and `sudo` error prose, which is translated.
+///   * **closed stdin** — a child that prompts gets EOF, not the TUI's terminal.
+///   * **own process group** — `sudo` and `docker` spawn helpers to kill too.
+///   * **timeout** — `docker` blocks forever on an unreachable daemon.
 pub fn output_timeout(program: &str, args: &[&str], timeout: Duration) -> io::Result<Output> {
     let mut command = Command::new(program);
     command
@@ -297,11 +275,8 @@ fn display_command(program: &str, args: &[&str]) -> String {
         .join(" ")
 }
 
-// `ip` reports "this already exists" and "this is not there" only in prose, so
-// we have to read the prose. That is safe because `output_timeout` pins every
-// child to the C locale, which fixes the exact wording these match against.
-//
-// The phrasings below come from iproute2 and Docker respectively:
+// `ip` reports "already exists" and "not there" only in prose, so we read the
+// prose — safe because every child is pinned to the C locale. Phrasings:
 //   ip addr add    -> "RTNETLINK answers: File exists"
 //   ip link add    -> "RTNETLINK answers: File exists"
 //   ip link delete -> "Cannot find device \"tap0\""
@@ -309,17 +284,9 @@ fn display_command(program: &str, args: &[&str]) -> String {
 
 /// Did this failure mean "that already exists", rather than a real problem?
 ///
-/// The obvious phrasings cover `ip addr add` on an address the interface
-/// already has. `ip tuntap add` is the odd one out: asking for a TAP that
-/// exists does not report EEXIST at all, it reports
-/// `ioctl(TUNSETIFF): Device or resource busy` — the driver's way of saying the
-/// name is taken. Without that case, running `minitcp tap up` twice fails, and
-/// so does opening the lab against a TAP that is already up and working
-/// perfectly well.
-///
-/// The busy check is deliberately tied to TUNSETIFF. A bare "resource busy"
-/// from some other `ip` subcommand is a genuine failure and must not be
-/// swallowed.
+/// `ip tuntap add` is the odd one out: a name that is taken comes back as
+/// `ioctl(TUNSETIFF): Device or resource busy`, not EEXIST. The busy check is
+/// tied to TUNSETIFF because a bare "resource busy" elsewhere is real.
 fn is_already_exists(detail: &str) -> bool {
     let lower = detail.to_ascii_lowercase();
     lower.contains("file exists")
@@ -384,9 +351,8 @@ mod tests {
 
     #[test]
     fn children_run_in_the_c_locale_so_parsed_messages_are_stable() {
-        // We decide whether an `ip` failure was harmless by reading its prose.
-        // That only works if the prose is not translated, so every child is
-        // pinned to the C locale.
+        // Harmless-failure detection reads `ip`'s prose, so it must not be
+        // translated.
         let output = output_timeout(
             "sh",
             &["-c", "printf '%s' \"$LC_ALL\""],
@@ -426,9 +392,8 @@ mod tests {
 
     #[test]
     fn a_tap_that_already_exists_is_not_an_error() {
-        // iproute2's actual wording when the device name is taken. It is an
-        // EBUSY from the tun driver, not an EEXIST, which is why the obvious
-        // "File exists" check missed it and `minitcp tap up` was not idempotent.
+        // The tun driver's EBUSY, not an EEXIST — which is why the obvious
+        // "File exists" check missed it.
         check_output(
             "ip",
             &[
@@ -453,8 +418,7 @@ mod tests {
 
     #[test]
     fn a_busy_resource_elsewhere_is_still_a_real_failure() {
-        // Only TUNSETIFF's EBUSY means "the name is taken". Swallowing every
-        // "resource busy" would hide genuine failures from other subcommands.
+        // Only TUNSETIFF's EBUSY means "the name is taken".
         check_output(
             "ip",
             &["link", "delete", "tap0"],

@@ -1,8 +1,7 @@
 // What each keystroke does.
 //
-// Kept in one file so the key map is readable as a list rather than gathered
-// from a scatter of match arms, and so it can be compared against the hint bar
-// the UI draws at the bottom of the screen.
+// One file, so the key map reads as a list and can be checked against the hint
+// bar drawn at the bottom of the screen.
 
 use std::thread;
 

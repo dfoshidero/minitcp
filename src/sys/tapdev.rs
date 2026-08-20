@@ -2,10 +2,8 @@
 //
 // A TAP is a virtual Ethernet cable: one end is an ordinary network interface
 // as far as Linux is concerned, the other end is a file descriptor a program
-// can read frames from and write frames to. This module owns the first end —
-// the `ip` commands that make the interface exist, and the decision of whether
-// it should exist here or inside the sidecar. Reading and writing frames on the
-// second end is `interface::tap`.
+// reads frames from and writes frames to. This module owns the first end;
+// `interface::tap` owns the second.
 
 use std::io;
 
@@ -15,10 +13,8 @@ use crate::sys::process::AllowedFailure;
 
 /// `minitcp tap up` — get a TAP from somewhere, preferring the sidecar.
 ///
-/// Docker first even on Linux: the sidecar needs no root on the host and
-/// behaves identically everywhere, which makes it the one path worth teaching.
-/// A Linux host that has no Docker can still make its own TAP, so that is the
-/// fallback rather than an error.
+/// Docker first even on Linux: the sidecar needs no host root and behaves the
+/// same everywhere. A local TAP is the fallback, not an error.
 pub fn tap_up(cfg: &Config) -> io::Result<()> {
     match docker::state()? {
         State::Ready => return docker::up(cfg),
@@ -45,8 +41,7 @@ pub fn tap_up(cfg: &Config) -> io::Result<()> {
 
 /// `minitcp tap down` — remove whichever kind of TAP is there.
 ///
-/// Both are attempted rather than guessed at, because a machine can easily have
-/// had one of each over the course of a session.
+/// Both are attempted, since one session can leave one of each behind.
 pub fn tap_down(cfg: &Config) -> io::Result<()> {
     let docker = docker::state()?;
     if matches!(&docker, State::Ready) && docker::down()? {
@@ -84,33 +79,17 @@ fn local_up(cfg: &Config) -> io::Result<()> {
     Ok(())
 }
 
-/// Is this interface present on this machine right now?
-///
-/// `/sys/class/net` is the kernel's own list of interfaces, so this is a
-/// question answered by a file lookup rather than by shelling out to `ip`.
+/// Is this interface present right now? `/sys/class/net` is the kernel's own
+/// list, so this is a file lookup rather than a shell-out to `ip`.
 pub fn iface_exists(name: &str) -> bool {
     std::path::Path::new(&format!("/sys/class/net/{name}")).exists()
 }
 
-/// Which user account should own a TAP device we are about to create.
+/// Which uid should own a TAP we are about to create: ourselves, or the person
+/// behind `sudo`, or nobody when we are root outright (a container).
 ///
-/// `ip tuntap add ... user N` hands the new device to a non-root account, so
-/// that account can later open `/dev/net/tun` and attach to it without being
-/// root. Deciding who "N" is has three cases:
-///
-///   * **an ordinary user** — give the device to ourselves, so the stack we are
-///     about to run can open it.
-///   * **root via `sudo`** — the person who typed the command is not root, and
-///     they are who will run the stack. `sudo` tells us who they were in
-///     `SUDO_UID`, so hand the device to them rather than to root.
-///   * **root outright**, as in a container — there is nobody else to hand it
-///     to, and naming an owner would be meaningless. We return `None` and the
-///     caller omits the `user` clause entirely, leaving the device root's.
-///
-/// The answer is always a *number*. The obvious alternative, `$USER`, is a
-/// plain environment variable: it is unset in most containers and under many
-/// init systems, and `sudo` leaves it pointing at the original user while the
-/// process itself is root. Asking the kernel who we are cannot be wrong.
+/// A uid, never `$USER` — that variable is unset in most containers and still
+/// names the original user under `sudo`.
 #[cfg(target_os = "linux")]
 fn owner_uid() -> Option<u32> {
     // Safe: getuid() reads process state and cannot fail.
@@ -124,10 +103,8 @@ fn owner_uid() -> Option<u32> {
         .filter(|&invoker| invoker != 0)
 }
 
-/// Build the `ip tuntap add` argument list.
-///
-/// Split out from `ensure_iface` purely so the "root owns it, so name no owner"
-/// rule can be tested without actually creating a device.
+/// Build the `ip tuntap add` argument list — split out so the owner rule can be
+/// tested without creating a device.
 #[cfg(target_os = "linux")]
 fn tuntap_add_args(name: &str, owner: Option<&str>) -> Vec<String> {
     let mut args: Vec<String> = ["tuntap", "add", "dev", name, "mode", "tap"]
@@ -153,8 +130,8 @@ fn tuntap_add_args(name: &str, owner: Option<&str>) -> Vec<String> {
 /// ip link set dev tap0 up                       plug it in
 /// ```
 ///
-/// The first two are forgiven if they fail because the thing already exists,
-/// which is what makes `minitcp tap up` safe to run twice.
+/// The first two are forgiven when the thing already exists, which is what
+/// makes `minitcp tap up` safe to run twice.
 pub fn ensure_iface(name: &str, linux_addr: std::net::Ipv4Addr) -> io::Result<()> {
     #[cfg(not(target_os = "linux"))]
     {
@@ -178,11 +155,8 @@ pub fn ensure_iface(name: &str, linux_addr: std::net::Ipv4Addr) -> io::Result<()
     }
 }
 
-/// Run one `ip` command, escalating only if we have to.
-///
-/// Try it as ourselves first: inside the sidecar we are already root, and
-/// invoking `sudo` there would be pointless (and fails outright, since the
-/// image has no sudo). Only if that is refused do we retry under `sudo`.
+/// Run one `ip` command, retrying under `sudo` only if it is refused. Inside
+/// the sidecar we are already root and the image has no sudo to call.
 #[cfg(target_os = "linux")]
 fn run_ip(args: &[&str], allowed: AllowedFailure) -> io::Result<()> {
     use crate::sys::process::{run_checked, run_sudo};
@@ -220,9 +194,6 @@ mod tests {
 
     #[test]
     fn root_creates_the_device_with_no_owner_clause() {
-        // Running as root outright — in a container, say — there is no other
-        // account to hand the device to, so `user` must be left off entirely
-        // rather than filled in with a guess like "root" or "netstack".
         assert_eq!(
             tuntap_add_args("tap0", None),
             ["tuntap", "add", "dev", "tap0", "mode", "tap"]
@@ -231,9 +202,6 @@ mod tests {
 
     #[test]
     fn the_owner_is_a_uid_not_a_name() {
-        // Whatever owner_uid() returns on this machine, it must be numeric:
-        // `ip` accepts either, but a name depends on $USER, which lies under
-        // sudo and is missing in most containers.
         if let Some(uid) = owner_uid() {
             assert!(
                 uid.to_string().chars().all(|c| c.is_ascii_digit()),
