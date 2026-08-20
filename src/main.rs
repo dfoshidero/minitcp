@@ -1,17 +1,32 @@
-// src/main.rs
+// minitcp — a userspace TCP/IP stack you can watch work.
+//
+//   cli        the command line and minitcp.toml
+//   dispatch   which command runs what
+//   proto      wire formats: Ethernet, ARP, IPv4, ICMP
+//   stack      the loop that answers frames
+//   interface  what carries frames: TAP, sidecar, pcap, hex
+//   sys        this machine: processes, the TAP device, Docker
+//   log        protocol tracing and status messages
+//   tui        the terminal UI
+//   release    the update check
 
 mod cli;
+mod dispatch;
 mod interface;
 mod log;
-mod process;
 mod proto;
+mod release;
 mod stack;
-mod tapcmd;
+mod sys;
 mod tui;
-mod update;
 
-use cli::{Command, HelpTopic};
-
+/// Why minitcp is about to exit non-zero.
+///
+/// The three cases exist because they mean different things to whoever ran the
+/// command: a usage error is the command line's fault and exits 2, a config
+/// error is the file's fault, and a runtime error is the world's. A broken pipe
+/// is deliberately none of them — `minitcp stack | head` is a normal way to use
+/// the tool and must not look like a failure.
 enum AppError {
     Usage(cli::ParseError),
     Config(cli::ParseError),
@@ -25,7 +40,7 @@ impl From<std::io::Error> for AppError {
 }
 
 fn main() {
-    let code = match run() {
+    let code = match dispatch::run() {
         Ok(()) => 0,
         Err(AppError::Usage(error)) => {
             let _ = log::write_stderr(&error.to_string());
@@ -44,76 +59,4 @@ fn main() {
     if code != 0 {
         std::process::exit(code);
     }
-}
-
-fn run() -> Result<(), AppError> {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let cfg = cli::parse(&args).map_err(AppError::Usage)?;
-
-    let skip_nag = cfg.offline
-        || !matches!(
-            cfg.command,
-            Command::Run | Command::Stack | Command::Replay(_)
-        );
-    if !skip_nag {
-        update::nag_if_outdated();
-    }
-
-    match cfg.command {
-        Command::Help(topic) => log::write_stderr(&cli::usage_topic(topic)).map_err(Into::into),
-        Command::Version => {
-            log::write_stdout(&format!("minitcp {}\n", env!("MINITCP_RELEASE"))).map_err(Into::into)
-        }
-        Command::Run => tui::run_lab(cfg).map_err(Into::into),
-        Command::Stack | Command::Replay(_) => stack::run_stack(cfg).map_err(Into::into),
-        Command::Pcap(path) => {
-            let output = crate::interface::pcap::pcap_info(&path)?;
-            log::write_stdout(&output)?;
-            Ok(())
-        }
-        Command::Bridge => stack::run_bridge(cfg).map_err(Into::into),
-        Command::TapUp => tapcmd::tap_up(&cfg).map_err(Into::into),
-        Command::TapDown => tapcmd::tap_down(&cfg).map_err(Into::into),
-        Command::TapShow => {
-            log::write_stderr(&tap_status(&cfg))?;
-            log::write_stderr(&cli::usage_topic(HelpTopic::Tap))?;
-            Ok(())
-        }
-        Command::TapSetIface(ref name) => write_key(&cfg, "iface", name),
-        Command::TapSetAddr(ip) => write_key(&cfg, "linux-addr", &ip.to_string()),
-        Command::TapSetTun(ref path) => write_key(&cfg, "tun", &path.display().to_string()),
-        Command::IdentityShow => {
-            log::write_stdout(&identity_status(&cfg))?;
-            Ok(())
-        }
-        Command::IdentitySetAddr(ip) => write_key(&cfg, "addr", &ip.to_string()),
-        Command::IdentitySetMac(mac) => write_key(&cfg, "mac", &mac.to_string()),
-    }
-}
-
-fn tap_status(cfg: &cli::Config) -> String {
-    format!(
-        "iface  {}\naddr   {}\ntun    {}\n\n",
-        cfg.iface,
-        cfg.linux_addr,
-        cfg.tun.display()
-    )
-}
-
-fn identity_status(cfg: &cli::Config) -> String {
-    format!(
-        "addr  {}\nmac   {}\n\nminitcp identity addr IP  writes {}\n",
-        cfg.addr,
-        cfg.mac,
-        cfg.config_path.display()
-    )
-}
-
-fn write_key(cfg: &cli::Config, key: &str, value: &str) -> Result<(), AppError> {
-    cli::write_config_key(cfg, key, value).map_err(AppError::Config)?;
-    log::status::ok(format!(
-        "wrote {key} = {value}  ({})",
-        cfg.config_path.display()
-    ));
-    Ok(())
 }

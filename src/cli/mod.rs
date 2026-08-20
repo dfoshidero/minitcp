@@ -1,17 +1,22 @@
 // Flags anywhere. Defaults < minitcp.toml < command line.
 
 mod args;
-mod config;
+mod command;
 mod error;
 mod file;
+mod flags;
+mod options;
+mod usage;
 
 use std::path::{Path, PathBuf};
 
-pub use config::{Command, Config, DEFAULT_CONFIG, DropKind, HelpTopic, Transport};
-pub use error::{ParseError, usage_topic};
+pub use command::{Command, HelpTopic};
+pub use error::ParseError;
+pub use options::{Config, DEFAULT_CONFIG, DropKind, Transport};
+pub use usage::usage_topic;
 
-use config::{Partial, apply_partial, default_linux_addr};
-use error::USAGE_CONFIG;
+use options::{Partial, apply_partial, default_linux_addr};
+use usage::USAGE_CONFIG;
 
 fn is_setter(command: &Command) -> bool {
     matches!(
