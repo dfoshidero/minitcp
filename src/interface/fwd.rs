@@ -10,18 +10,14 @@ use std::time::{Duration, Instant};
 use super::FrameIo;
 use super::tap::TapInterface;
 
-/// Where the host stack looks for the bridge.
+/// Default bridge address for the host stack.
 pub const DEFAULT_FWD: &str = "127.0.0.1:7946";
 
-/// Where the bridge listens unless told otherwise.
+/// Default bridge listen address.
 ///
-/// Loopback, deliberately. This socket hands out raw Ethernet frames on a TAP
-/// with no authentication of any kind: anyone who can connect can inject frames
-/// onto that link and read everything crossing it. The sidecar overrides this
-/// with `0.0.0.0` because inside a container that *is* loopback in effect — the
-/// `docker run` line publishes the port only on 127.0.0.1, so the container's
-/// namespace is the boundary. Run by hand on a real host, `0.0.0.0` would be
-/// an open door, so it is not what you get by default.
+/// Uses loopback because the unauthenticated socket permits raw TAP access.
+/// The container sidecar may use `0.0.0.0` when Docker publishes it only on
+/// host loopback.
 pub const DEFAULT_LISTEN: &str = "127.0.0.1:7946";
 
 const CONNECT_RETRY: Duration = Duration::from_secs(8);
@@ -124,12 +120,9 @@ impl FrameIo for TcpFrames {
     }
 }
 
-/// Read one length-prefixed frame: four big-endian length bytes, then the frame.
+/// Read one frame prefixed by its four-byte big-endian length.
 ///
-/// `Ok(0)` means the peer closed the connection, and nothing else. A length
-/// prefix of zero is *not* the same thing — the caller stops on 0, so treating
-/// a zero-length record as a close would let one corrupt prefix end the session
-/// while looking like a tidy disconnect.
+/// Returns `Ok(0)` only on a clean disconnect; zero-length frames are invalid.
 fn read_record(stream: &mut TcpStream, buffer: &mut [u8]) -> io::Result<usize> {
     let mut len_buf = [0u8; 4];
     if stream.read(&mut len_buf[..1])? == 0 {
@@ -190,12 +183,7 @@ pub fn run_bridge(listen: &str, tap: TapInterface) -> io::Result<()> {
 
 /// Warn if this bridge is reachable from outside the machine.
 ///
-/// Binding beyond loopback is allowed — that is exactly what the sidecar does,
-/// and it may be what somebody genuinely wants on a private lab network — but
-/// it is never something to do by accident, so it is always said out loud.
-///
-/// The check is on the address we *actually* bound, not the string asked for,
-/// so `0.0.0.0`, `::`, and a specific LAN address are all caught the same way.
+/// Checks the resolved address to cover wildcard and specific LAN bindings.
 fn exposure_warning(bound: SocketAddr) -> Option<String> {
     if bound.ip().is_loopback() {
         return None;
@@ -212,8 +200,8 @@ fn exposure_warning(bound: SocketAddr) -> Option<String> {
 ///
 /// Deliberately serial. A TAP delivers each frame to exactly one reader, so two
 /// stacks connected at once would not both see the traffic — they would steal
-/// frames from each other at random, and the resulting "my ping vanished
-/// sometimes" is about the worst thing to hand someone learning networking.
+/// frames from each other at random
+///
 /// While one client is connected, the next sits in the kernel's accept queue
 /// and is served the moment the first disconnects.
 ///
@@ -333,9 +321,7 @@ mod tests {
 
     #[test]
     fn a_zero_length_prefix_is_corruption_not_a_disconnect() {
-        // Ok(0) is how the read loop learns the peer went away. If a zero
-        // length prefix also produced Ok(0), one desynchronised byte would end
-        // the session and look like the sidecar had simply been stopped.
+        // Zero-length records must not masquerade as a clean disconnect.
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let handle = thread::spawn(move || {
