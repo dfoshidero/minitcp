@@ -62,16 +62,15 @@ impl DropKind {
 
 /// How Ethernet frames reach the stack.
 ///
-/// Only two things can be at the other end of the stack's read loop, and which
-/// one it is changes far more than the transport: it decides where the TAP
-/// lives, and therefore which kernel can see the traffic at all.
+/// Determines where TAP lives and which kernel can see traffic
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Transport {
-    /// A TAP device on this machine, read through `/dev/net/tun`.
+    /// A TAP device within this machine, read through `/dev/net/tun`.
     LocalTap,
-    /// Frames relayed over TCP from a bridge that owns the TAP — normally the
-    /// sidecar container, since only Linux can create a TAP at all.
+    /// Frames relayed over TCP from a bridge that owns the TAP (needed to enable
+    /// TAP read from sidecar container)
     Forwarded(String),
+    /// others
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -129,22 +128,16 @@ impl Config {
         !self.quiet
     }
 
-    /// Decide how Ethernet frames will reach this stack.
+    /// Decide how Ethernet frames reach this stack by checking filesystem
     ///
-    /// This looks at the filesystem, so it is deliberately a *decision* rather
-    /// than a getter: it is meant to be called once, early, and the answer
-    /// carried around. Calling it repeatedly invites two parts of the program
-    /// to reach different conclusions if `/dev/net/tun` appears or disappears
-    /// underneath them — which is exactly what happens when someone runs
-    /// `minitcp tap up` in another terminal.
+    /// Call once at startup and reuse the result, since `/dev/net/tun` may change.
     pub fn transport(&self) -> Transport {
         // An explicit --fwd is an instruction, not a hint, so it wins outright.
         if let Some(addr) = &self.fwd {
             return Transport::Forwarded(addr.clone());
         }
-        // Otherwise: if this kernel can give us a TAP, use it directly. If it
-        // cannot — macOS, or a container without the tun device — the only way
-        // to reach one is the sidecar.
+        // Otherwise if kernel can give TAP, use it directly. If it cannot
+        // (e.g. macOS, or a container without tun device) use the sidecar
         if self.tun.exists() {
             Transport::LocalTap
         } else {
@@ -321,7 +314,7 @@ mod tests {
 
     #[test]
     fn no_tun_device_means_the_sidecar() {
-        // This is the macOS case, and the container-without-/dev/net/tun case:
+        // macOS case, or device without /dev/net/tun case:
         // this kernel cannot make a TAP, so the only way to reach one is over
         // TCP from a machine that can.
         let mut cfg = Config::defaults();
