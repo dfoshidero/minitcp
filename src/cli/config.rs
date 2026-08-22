@@ -60,6 +60,19 @@ impl DropKind {
     }
 }
 
+/// How Ethernet frames reach the stack.
+///
+/// Determines where TAP lives and which kernel can see traffic
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Transport {
+    /// A TAP device within this machine, read through `/dev/net/tun`.
+    LocalTap,
+    /// Frames relayed over TCP from a bridge that owns the TAP (needed to enable
+    /// TAP read from sidecar container)
+    Forwarded(String),
+    /// others
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Config {
     pub command: Command,
@@ -115,12 +128,21 @@ impl Config {
         !self.quiet
     }
 
-    /// Host stack talks to the TAP sidecar over TCP unless `/dev/net/tun` is here.
-    pub fn use_fwd(&self) -> bool {
-        if self.fwd.is_some() {
-            return true;
+    /// Decide how Ethernet frames reach this stack by checking filesystem
+    ///
+    /// Call once at startup and reuse the result, since `/dev/net/tun` may change.
+    pub fn transport(&self) -> Transport {
+        // An explicit --fwd is an instruction, not a hint, so it wins outright.
+        if let Some(addr) = &self.fwd {
+            return Transport::Forwarded(addr.clone());
         }
-        !self.tun.exists()
+        // Otherwise if kernel can give TAP, use it directly. If it cannot
+        // (e.g. macOS, or a container without tun device) use the sidecar
+        if self.tun.exists() {
+            Transport::LocalTap
+        } else {
+            Transport::Forwarded(crate::interface::fwd::DEFAULT_FWD.into())
+        }
     }
 
     pub fn fwd_addr(&self) -> String {
@@ -263,5 +285,44 @@ pub(crate) fn apply_partial(base: &mut Config, over: &Partial) {
     }
     if let Some(v) = over.offline {
         base.offline = v;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_explicit_fwd_address_is_obeyed_even_when_a_tap_is_available() {
+        let mut cfg = Config::defaults();
+        cfg.fwd = Some("10.1.2.3:9999".into());
+        // A path that certainly exists, standing in for a usable /dev/net/tun.
+        cfg.tun = PathBuf::from("/");
+        assert_eq!(
+            cfg.transport(),
+            Transport::Forwarded("10.1.2.3:9999".into())
+        );
+    }
+
+    #[test]
+    fn a_usable_tun_device_means_a_local_tap() {
+        let mut cfg = Config::defaults();
+        cfg.fwd = None;
+        cfg.tun = PathBuf::from("/");
+        assert_eq!(cfg.transport(), Transport::LocalTap);
+    }
+
+    #[test]
+    fn no_tun_device_means_the_sidecar() {
+        // macOS case, or device without /dev/net/tun case:
+        // this kernel cannot make a TAP, so the only way to reach one is over
+        // TCP from a machine that can.
+        let mut cfg = Config::defaults();
+        cfg.fwd = None;
+        cfg.tun = PathBuf::from("/definitely/not/a/real/device");
+        assert_eq!(
+            cfg.transport(),
+            Transport::Forwarded(crate::interface::fwd::DEFAULT_FWD.into())
+        );
     }
 }

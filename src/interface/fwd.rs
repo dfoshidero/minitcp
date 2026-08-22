@@ -10,8 +10,15 @@ use std::time::{Duration, Instant};
 use super::FrameIo;
 use super::tap::TapInterface;
 
+/// Default bridge address for the host stack.
 pub const DEFAULT_FWD: &str = "127.0.0.1:7946";
-pub const DEFAULT_LISTEN: &str = "0.0.0.0:7946";
+
+/// Default bridge listen address.
+///
+/// Uses loopback because the unauthenticated socket permits raw TAP access.
+/// The container sidecar may use `0.0.0.0` when Docker publishes it only on
+/// host loopback.
+pub const DEFAULT_LISTEN: &str = "127.0.0.1:7946";
 
 const CONNECT_RETRY: Duration = Duration::from_secs(8);
 const CONNECT_INTERVAL: Duration = Duration::from_millis(200);
@@ -113,15 +120,22 @@ impl FrameIo for TcpFrames {
     }
 }
 
+/// Read one frame prefixed by its four-byte big-endian length.
+///
+/// Returns `Ok(0)` only on a clean disconnect; zero-length frames are invalid.
 fn read_record(stream: &mut TcpStream, buffer: &mut [u8]) -> io::Result<usize> {
     let mut len_buf = [0u8; 4];
     if stream.read(&mut len_buf[..1])? == 0 {
         return Ok(0);
     }
+    // Part of a length prefix arrived, so the rest of it must follow.
     stream.read_exact(&mut len_buf[1..])?;
     let n = u32::from_be_bytes(len_buf) as usize;
     if n == 0 {
-        return Ok(0);
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "forwarded frame claims zero bytes; the link is out of step",
+        ));
     }
     if n > MAX_FRAME {
         return Err(io::Error::new(
@@ -159,10 +173,40 @@ fn write_record(stream: &mut impl Write, frame: &[u8]) -> io::Result<()> {
 
 pub fn run_bridge(listen: &str, tap: TapInterface) -> io::Result<()> {
     let listener = TcpListener::bind(listen)?;
-    crate::log::status::info(format!("bridge listening on {listen}"));
+    let bound = listener.local_addr()?;
+    if let Some(warning) = exposure_warning(bound) {
+        crate::log::status::warn(warning);
+    }
+    crate::log::status::info(format!("bridge listening on {bound}"));
     accept_loop(listener, tap)
 }
 
+/// Warn if this bridge is reachable from outside the machine.
+///
+/// Checks the resolved address to cover wildcard and specific LAN bindings.
+fn exposure_warning(bound: SocketAddr) -> Option<String> {
+    if bound.ip().is_loopback() {
+        return None;
+    }
+    Some(format!(
+        "bridge is listening on {bound}, which is reachable from outside this machine. \
+         It has no authentication: anyone who can connect can read and inject frames \
+         on the TAP. Use --listen 127.0.0.1:{} unless you meant this.",
+        bound.port()
+    ))
+}
+
+/// Serve one host stack at a time, forever.
+///
+/// Deliberately serial. A TAP delivers each frame to exactly one reader, so two
+/// stacks connected at once would not both see the traffic — they would steal
+/// frames from each other at random
+///
+/// While one client is connected, the next sits in the kernel's accept queue
+/// and is served the moment the first disconnects.
+///
+/// A client hanging up is the normal way a session ends (the user quit the
+/// lab), so it is reported and waited on again rather than treated as an error.
 fn accept_loop(listener: TcpListener, tap: TapInterface) -> io::Result<()> {
     loop {
         let (stream, peer) = listener.accept()?;
@@ -274,6 +318,49 @@ mod tests {
     use std::fs::File;
     use std::os::fd::OwnedFd;
     use std::time::Duration;
+
+    #[test]
+    fn a_zero_length_prefix_is_corruption_not_a_disconnect() {
+        // Zero-length records must not masquerade as a clean disconnect.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream.write_all(&0u32.to_be_bytes()).unwrap();
+            // Hold the connection open, so a genuine close cannot be the cause.
+            thread::sleep(Duration::from_millis(200));
+        });
+
+        let mut frames = TcpFrames::connect(&addr.to_string()).unwrap();
+        let error = frames.read_frame(&mut [0u8; 2048]).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn the_bridge_keeps_to_itself_by_default() {
+        // If this ever changes, an unauthenticated raw-frame socket becomes
+        // reachable from the network the moment someone runs `minitcp bridge`.
+        let addr: SocketAddr = DEFAULT_LISTEN.parse().unwrap();
+        assert!(addr.ip().is_loopback(), "{DEFAULT_LISTEN}");
+        assert!(exposure_warning(addr).is_none());
+    }
+
+    #[test]
+    fn binding_beyond_loopback_is_said_out_loud() {
+        for exposed in ["0.0.0.0:7946", "192.168.1.5:7946", "[::]:7946"] {
+            let warning = exposure_warning(exposed.parse().unwrap());
+            let warning = warning.unwrap_or_else(|| panic!("{exposed} should warn"));
+            assert!(warning.contains("no authentication"), "{warning}");
+            // The advice has to name a port the user can actually paste back.
+            assert!(warning.contains("127.0.0.1:7946"), "{warning}");
+        }
+    }
+
+    #[test]
+    fn the_loopback_address_family_does_not_matter() {
+        assert!(exposure_warning("[::1]:7946".parse().unwrap()).is_none());
+    }
 
     #[test]
     fn length_prefixed_roundtrip() {

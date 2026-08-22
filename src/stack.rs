@@ -168,26 +168,31 @@ pub fn run_stack(cfg: Config) -> std::io::Result<()> {
             EofBehavior::Success,
         );
     }
-    if cfg.use_fwd() {
-        let addr = cfg.fwd_addr();
-        let frames = crate::interface::fwd::TcpFrames::connect(&addr).map_err(|error| {
-            io::Error::new(
-                error.kind(),
-                format!("cannot connect to TAP sidecar at {addr}; try `minitcp tap up`: {error}"),
-            )
-        })?;
-        log::status::info(format!(
-            "listening {} via {addr} as {} ({})",
-            cfg.iface, cfg.addr, cfg.mac
-        ));
-        return run_io(cfg, frames, EofBehavior::Failure);
+    match cfg.transport() {
+        crate::cli::Transport::Forwarded(addr) => {
+            let frames = crate::interface::fwd::TcpFrames::connect(&addr).map_err(|error| {
+                io::Error::new(
+                    error.kind(),
+                    format!(
+                        "cannot connect to TAP sidecar at {addr}; try `minitcp tap up`: {error}"
+                    ),
+                )
+            })?;
+            log::status::info(format!(
+                "listening {} via {addr} as {} ({})",
+                cfg.iface, cfg.addr, cfg.mac
+            ));
+            run_io(cfg, frames, EofBehavior::Failure)
+        }
+        crate::cli::Transport::LocalTap => {
+            let tap = open_tap(&cfg)?;
+            log::status::info(format!(
+                "listening {} as {} ({})",
+                cfg.iface, cfg.addr, cfg.mac
+            ));
+            run_io(cfg, tap, EofBehavior::Failure)
+        }
     }
-    let tap = open_tap(&cfg)?;
-    log::status::info(format!(
-        "listening {} as {} ({})",
-        cfg.iface, cfg.addr, cfg.mac
-    ));
-    run_io(cfg, tap, EofBehavior::Failure)
 }
 
 #[derive(Clone, Copy)]

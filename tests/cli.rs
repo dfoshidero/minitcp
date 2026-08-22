@@ -218,7 +218,11 @@ fn version_goes_to_stdout_and_succeeds() {
         "{}",
         out.dump("version belongs on stdout so it can be piped")
     );
-    assert!(out.stderr.is_empty(), "{}", out.dump("stderr should be quiet"));
+    assert!(
+        out.stderr.is_empty(),
+        "{}",
+        out.dump("stderr should be quiet")
+    );
 }
 
 #[test]
@@ -244,7 +248,11 @@ fn help_succeeds_and_lists_every_command() {
         "Exit status: 0 success",
         "minitcp.toml",
     ] {
-        assert!(text.contains(expected), "{}", out.dump(&format!("help should mention {expected:?}")));
+        assert!(
+            text.contains(expected),
+            "{}",
+            out.dump(&format!("help should mention {expected:?}"))
+        );
     }
 }
 
@@ -271,7 +279,11 @@ fn help_currently_goes_to_stderr() {
 fn topic_help_is_scoped_to_the_family() {
     let tap = run(&["tap", "--help"]);
     assert_eq!(tap.code, 0, "{}", tap.dump("tap --help should succeed"));
-    assert!(tap.all().contains("usage: minitcp tap"), "{}", tap.dump("tap help"));
+    assert!(
+        tap.all().contains("usage: minitcp tap"),
+        "{}",
+        tap.dump("tap help")
+    );
     assert!(
         !tap.all().contains("minitcp identity"),
         "{}",
@@ -286,7 +298,11 @@ fn topic_help_is_scoped_to_the_family() {
     );
 
     let pcap = run(&["pcap", "--help"]);
-    assert!(pcap.all().contains("usage: minitcp pcap"), "{}", pcap.dump("pcap help"));
+    assert!(
+        pcap.all().contains("usage: minitcp pcap"),
+        "{}",
+        pcap.dump("pcap help")
+    );
 }
 
 // ===========================================================================
@@ -335,7 +351,12 @@ fn two_commands_are_rejected() {
 fn a_flag_missing_its_value_names_the_flag() {
     for flag in ["--iface", "--addr", "--mac", "--tun", "--config", "--fwd"] {
         let out = run(&[flag]);
-        assert_eq!(out.code, 2, "{}", out.dump(&format!("{flag} with no value")));
+        assert_eq!(
+            out.code,
+            2,
+            "{}",
+            out.dump(&format!("{flag} with no value"))
+        );
         assert!(
             out.stderr.contains(&format!("{flag} needs a value")),
             "{}",
@@ -395,7 +416,12 @@ fn boundary_values_are_accepted() {
     // command that only reads config, so it exercises parsing and nothing else.
     for (flag, value) in [("--ttl", "255"), ("--drop-pct", "100"), ("--id", "65535")] {
         let out = run(&["identity", flag, value]);
-        assert_eq!(out.code, 0, "{}", out.dump(&format!("{flag} {value} is legal")));
+        assert_eq!(
+            out.code,
+            0,
+            "{}",
+            out.dump(&format!("{flag} {value} is legal"))
+        );
     }
 }
 
@@ -424,8 +450,17 @@ fn flags_accept_both_spaced_and_equals_forms() {
     let dir = TempDir::new("eq");
     let spaced = run_in(dir.path(), &["tap", "--iface", "tap9"]);
     let equals = run_in(dir.path(), &["tap", "--iface=tap9"]);
-    assert_eq!(spaced.all(), equals.all(), "{}", spaced.dump("--iface X vs --iface=X"));
-    assert!(spaced.all().contains("tap9"), "{}", spaced.dump("--iface should take effect"));
+    assert_eq!(
+        spaced.all(),
+        equals.all(),
+        "{}",
+        spaced.dump("--iface X vs --iface=X")
+    );
+    assert!(
+        spaced.all().contains("tap9"),
+        "{}",
+        spaced.dump("--iface should take effect")
+    );
 }
 
 // ===========================================================================
@@ -447,7 +482,11 @@ fn a_toml_in_the_working_directory_is_picked_up() {
     dir.write("minitcp.toml", "iface = \"tapx\"\naddr = \"10.9.9.2\"\n");
 
     let tap = run_in(dir.path(), &["tap"]);
-    assert!(tap.all().contains("tapx"), "{}", tap.dump("iface from minitcp.toml"));
+    assert!(
+        tap.all().contains("tapx"),
+        "{}",
+        tap.dump("iface from minitcp.toml")
+    );
 
     let identity = run_in(dir.path(), &["identity"]);
     assert!(
@@ -462,8 +501,16 @@ fn the_command_line_beats_the_config_file() {
     let dir = TempDir::new("override");
     dir.write("minitcp.toml", "iface = \"fromfile\"\n");
     let out = run_in(dir.path(), &["tap", "--iface", "fromflag"]);
-    assert!(out.all().contains("fromflag"), "{}", out.dump("flag should win"));
-    assert!(!out.all().contains("fromfile"), "{}", out.dump("file should lose"));
+    assert!(
+        out.all().contains("fromflag"),
+        "{}",
+        out.dump("flag should win")
+    );
+    assert!(
+        !out.all().contains("fromfile"),
+        "{}",
+        out.dump("file should lose")
+    );
 }
 
 #[test]
@@ -472,8 +519,16 @@ fn config_flag_selects_a_different_file() {
     dir.write("minitcp.toml", "iface = \"ignored\"\n");
     let other = dir.write("other.toml", "iface = \"chosen\"\n");
     let out = run_in(dir.path(), &["tap", "--config", other.to_str().unwrap()]);
-    assert!(out.all().contains("chosen"), "{}", out.dump("--config should be used"));
-    assert!(!out.all().contains("ignored"), "{}", out.dump("./minitcp.toml should be skipped"));
+    assert!(
+        out.all().contains("chosen"),
+        "{}",
+        out.dump("--config should be used")
+    );
+    assert!(
+        !out.all().contains("ignored"),
+        "{}",
+        out.dump("./minitcp.toml should be skipped")
+    );
 }
 
 #[test]
@@ -492,7 +547,12 @@ fn malformed_toml_is_reported() {
     let dir = TempDir::new("badtoml");
     dir.write("minitcp.toml", "iface = \n");
     let out = run_in(dir.path(), &["tap"]);
-    assert_ne!(out.code, 0, "{}", out.dump("broken toml should not be silently ignored"));
+    assert_ne!(
+        out.code,
+        0,
+        "{}",
+        out.dump("broken toml should not be silently ignored")
+    );
 }
 
 #[test]
@@ -500,7 +560,11 @@ fn linux_addr_defaults_to_dot_one_on_the_same_subnet() {
     // MiniTCP at 10.9.9.2 implies Linux is the .1 on that street, unless told
     // otherwise. This rule lives in one place and is easy to lose in a refactor.
     let out = run(&["tap", "--addr", "10.9.9.2"]);
-    assert!(out.all().contains("10.9.9.1"), "{}", out.dump("linux-addr should default to .1"));
+    assert!(
+        out.all().contains("10.9.9.1"),
+        "{}",
+        out.dump("linux-addr should default to .1")
+    );
 
     let explicit = run(&["tap", "--addr", "10.9.9.2", "--linux-addr", "10.9.9.7"]);
     assert!(
@@ -519,7 +583,11 @@ fn tap_show_reports_iface_addr_and_tun() {
     let out = run(&["tap"]);
     assert_eq!(out.code, 0, "{}", out.dump("tap show"));
     for field in ["iface", "addr", "tun"] {
-        assert!(out.all().contains(field), "{}", out.dump(&format!("tap show should list {field}")));
+        assert!(
+            out.all().contains(field),
+            "{}",
+            out.dump(&format!("tap show should list {field}"))
+        );
     }
 }
 
@@ -540,8 +608,16 @@ fn tap_show_currently_also_dumps_the_usage_block() {
 fn identity_show_reports_addr_and_mac_on_stdout() {
     let out = run(&["identity"]);
     assert_eq!(out.code, 0, "{}", out.dump("identity show"));
-    assert!(out.stdout.contains("10.0.0.2"), "{}", out.dump("default addr"));
-    assert!(out.stdout.contains("02:00:00:00:00:02"), "{}", out.dump("default mac"));
+    assert!(
+        out.stdout.contains("10.0.0.2"),
+        "{}",
+        out.dump("default addr")
+    );
+    assert!(
+        out.stdout.contains("02:00:00:00:00:02"),
+        "{}",
+        out.dump("default mac")
+    );
 }
 
 #[test]
@@ -556,7 +632,11 @@ fn identity_setters_write_the_config_file() {
 
     // And the value must be read back on the next run.
     let back = run_in(dir.path(), &["identity"]);
-    assert!(back.stdout.contains("10.4.4.2"), "{}", back.dump("round trip through the file"));
+    assert!(
+        back.stdout.contains("10.4.4.2"),
+        "{}",
+        back.dump("round trip through the file")
+    );
 }
 
 #[test]
@@ -566,8 +646,16 @@ fn tap_setters_write_the_config_file() {
     assert_eq!(run_in(dir.path(), &["tap", "addr", "10.5.5.1"]).code, 0);
 
     let back = run_in(dir.path(), &["tap"]);
-    assert!(back.all().contains("tap7"), "{}", back.dump("iface round trip"));
-    assert!(back.all().contains("10.5.5.1"), "{}", back.dump("addr round trip"));
+    assert!(
+        back.all().contains("tap7"),
+        "{}",
+        back.dump("iface round trip")
+    );
+    assert!(
+        back.all().contains("10.5.5.1"),
+        "{}",
+        back.dump("addr round trip")
+    );
 }
 
 // ===========================================================================
@@ -582,19 +670,32 @@ fn pcap_lists_frames_and_their_ethertype() {
 
     let out = run_in(dir.path(), &["pcap", path.to_str().unwrap()]);
     assert_eq!(out.code, 0, "{}", out.dump("pcap info"));
-    assert!(out.stdout.contains("0x0806"), "{}", out.dump("ARP ethertype"));
-    assert!(out.stdout.contains("2 frames"), "{}", out.dump("frame count"));
+    assert!(
+        out.stdout.contains("0x0806"),
+        "{}",
+        out.dump("ARP ethertype")
+    );
+    assert!(
+        out.stdout.contains("2 frames"),
+        "{}",
+        out.dump("frame count")
+    );
 }
 
 #[test]
 fn pcap_on_a_missing_file_is_a_runtime_error_not_a_usage_error() {
     let out = run(&["pcap", "/no/such/file.pcap"]);
     assert_eq!(
-        out.code, 1,
+        out.code,
+        1,
         "{}",
         out.dump("a file that is absent at run time is exit 1, not exit 2")
     );
-    assert!(out.stderr.contains("cannot open pcap"), "{}", out.dump("missing pcap"));
+    assert!(
+        out.stderr.contains("cannot open pcap"),
+        "{}",
+        out.dump("missing pcap")
+    );
 }
 
 #[test]
@@ -625,7 +726,12 @@ fn hex_stack_answers_an_arp_request() {
         &["stack", "--hex", "--offline", "--quiet"],
         &hex_line(&ARP_REQUEST),
     );
-    assert_eq!(out.code, 0, "{}", out.dump("hex stack should end cleanly at EOF"));
+    assert_eq!(
+        out.code,
+        0,
+        "{}",
+        out.dump("hex stack should end cleanly at EOF")
+    );
     assert!(
         out.stdout.contains("arp") && out.stdout.contains("10.0.0.1 -> 10.0.0.2"),
         "{}",
@@ -648,11 +754,31 @@ fn verbose_output_shows_the_layer_tree_and_the_reply() {
     assert_eq!(out.code, 0, "{}", out.dump("verbose hex stack"));
     let text = out.stdout.clone();
     // Frame in, decoded down the layers, reply out.
-    assert!(text.contains("[IN]"), "{}", out.dump("should mark the inbound frame"));
-    assert!(text.contains("ethernet"), "{}", out.dump("should name the L2 header"));
-    assert!(text.contains("L2"), "{}", out.dump("should label the OSI layer"));
-    assert!(text.contains("who-has"), "{}", out.dump("should decode the request"));
-    assert!(text.contains("[OUT]"), "{}", out.dump("should mark the reply"));
+    assert!(
+        text.contains("[IN]"),
+        "{}",
+        out.dump("should mark the inbound frame")
+    );
+    assert!(
+        text.contains("ethernet"),
+        "{}",
+        out.dump("should name the L2 header")
+    );
+    assert!(
+        text.contains("L2"),
+        "{}",
+        out.dump("should label the OSI layer")
+    );
+    assert!(
+        text.contains("who-has"),
+        "{}",
+        out.dump("should decode the request")
+    );
+    assert!(
+        text.contains("[OUT]"),
+        "{}",
+        out.dump("should mark the reply")
+    );
     assert!(
         text.contains("is-at 02:00:00:00:00:02"),
         "{}",
@@ -670,8 +796,17 @@ fn replay_answers_an_arp_request_from_a_pcap() {
         dir.path(),
         &["replay", path.to_str().unwrap(), "--offline", "--quiet"],
     );
-    assert_eq!(out.code, 0, "{}", out.dump("replay ends cleanly at end of file"));
-    assert!(out.stdout.contains("who-has"), "{}", out.dump("replayed ARP"));
+    assert_eq!(
+        out.code,
+        0,
+        "{}",
+        out.dump("replay ends cleanly at end of file")
+    );
+    assert!(
+        out.stdout.contains("who-has"),
+        "{}",
+        out.dump("replayed ARP")
+    );
 }
 
 #[test]
@@ -736,7 +871,12 @@ fn write_captures_both_directions_into_a_readable_pcap() {
     // One frame in, one reply out: the capture should hold both, and minitcp
     // must be able to read back what it just wrote.
     let info = run_in(dir.path(), &["pcap", capture.to_str().unwrap()]);
-    assert_eq!(info.code, 0, "{}", info.dump("reading back our own capture"));
+    assert_eq!(
+        info.code,
+        0,
+        "{}",
+        info.dump("reading back our own capture")
+    );
     assert!(
         info.stdout.contains("2 frames"),
         "{}",
@@ -766,7 +906,12 @@ fn a_short_frame_is_dropped_rather_than_crashing() {
         &["stack", "--hex", "--offline", "--quiet"],
         "0011\n",
     );
-    assert_eq!(out.code, 0, "{}", out.dump("a runt frame should not be fatal"));
+    assert_eq!(
+        out.code,
+        0,
+        "{}",
+        out.dump("a runt frame should not be fatal")
+    );
     assert!(
         out.stdout.contains("[DROP]"),
         "{}",

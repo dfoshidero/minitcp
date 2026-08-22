@@ -7,7 +7,7 @@ mod file;
 
 use std::path::{Path, PathBuf};
 
-pub use config::{Command, Config, DEFAULT_CONFIG, DropKind, HelpTopic};
+pub use config::{Command, Config, DEFAULT_CONFIG, DropKind, HelpTopic, Transport};
 pub use error::{ParseError, usage_topic};
 
 use config::{Partial, apply_partial, default_linux_addr};
