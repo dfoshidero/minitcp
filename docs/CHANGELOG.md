@@ -1,3 +1,10 @@
+# [1.6.0](https://github.com/dfoshidero/minitcp/compare/v1.5.0...v1.6.0) (2026-09-17)
+
+
+### Features
+
+* tap and transport correctness ([#29](https://github.com/dfoshidero/minitcp/issues/29)) ([ccb8127](https://github.com/dfoshidero/minitcp/commit/ccb8127df0f9a214f774273fabaddc4460ca55a9))
+
 # [1.5.0](https://github.com/dfoshidero/minitcp/compare/v1.4.0...v1.5.0) (2026-09-17)
 
 
