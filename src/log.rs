@@ -66,8 +66,18 @@ impl<'a> Event<'a> {
     }
 }
 
+/// Wall-clock "HH:MM:SS" stamp that opens each protocol line.
 pub fn now() -> String {
-    timestamp()
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    let mut tm = unsafe { std::mem::zeroed::<libc::tm>() };
+    unsafe {
+        libc::clock_gettime(libc::CLOCK_REALTIME, &mut ts);
+        libc::localtime_r(&ts.tv_sec, &mut tm);
+    }
+    format!("{:02}:{:02}:{:02}", tm.tm_hour, tm.tm_min, tm.tm_sec)
 }
 
 /// One-line quiet summary: time, layer, addresses, reason. No IN/OUT.
@@ -221,19 +231,6 @@ pub mod status {
             );
         }
     }
-}
-
-fn timestamp() -> String {
-    let mut ts = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
-    };
-    let mut tm = unsafe { std::mem::zeroed::<libc::tm>() };
-    unsafe {
-        libc::clock_gettime(libc::CLOCK_REALTIME, &mut ts);
-        libc::localtime_r(&ts.tv_sec, &mut tm);
-    }
-    format!("{:02}:{:02}:{:02}", tm.tm_hour, tm.tm_min, tm.tm_sec)
 }
 
 #[cfg(test)]

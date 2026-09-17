@@ -103,12 +103,17 @@ impl DumpFilter {
         }
     }
 
-    fn title(self, iface: &str) -> String {
+    /// Trailing pcap-filter expression for the tcpdump command line.
+    fn filter_arg(self) -> &'static str {
         match self {
-            Self::All => format!("tcpdump -eni {iface} -l"),
-            Self::Arp => format!("tcpdump -eni {iface} -l arp"),
-            Self::Ip => format!("tcpdump -eni {iface} -l ip"),
+            Self::All => "",
+            Self::Arp => " arp",
+            Self::Ip => " ip",
         }
+    }
+
+    fn title(self, iface: &str) -> String {
+        format!("tcpdump -eni {iface} -l{}", self.filter_arg())
     }
 }
 
@@ -225,10 +230,20 @@ struct ChildProc {
 }
 
 impl ChildProc {
-    fn spawn_stack(cfg: &Config, verbose: bool) -> std::io::Result<Self> {
-        let exe = std::env::current_exe()?;
-        let mut cmd = Command::new(exe);
-        cmd.args(cfg.child_stack_args(verbose));
+    /// No process: a pane whose child could not start, or is not used here.
+    fn none() -> Self {
+        Self {
+            child: None,
+            privileged: true,
+            command_pid: None,
+            exit_status: None,
+            exit_error: None,
+        }
+    }
+
+    /// Every child is spawned the same way: no stdin, both streams piped into a
+    /// pane, and its own process group so it dies with the UI.
+    fn spawn_piped(cmd: &mut Command, privileged: bool) -> std::io::Result<Self> {
         cmd.stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -239,70 +254,52 @@ impl ChildProc {
         let command_pid = Some(child.id() as i32);
         Ok(Self {
             child: Some(child),
-            privileged: false,
+            privileged,
             command_pid,
             exit_status: None,
             exit_error: None,
         })
+    }
+
+    fn spawn_stack(cfg: &Config, verbose: bool) -> std::io::Result<Self> {
+        let exe = std::env::current_exe()?;
+        Self::spawn_piped(Command::new(exe).args(cfg.child_stack_args(verbose)), false)
     }
 
     fn spawn_dump(filter: DumpFilter, iface: &str) -> std::io::Result<Self> {
         // sudo may put tcpdump behind a monitor process. Have the shell report
         // the exact command PID before exec replaces it with tcpdump.
-        let filter_arg = match filter {
-            DumpFilter::All => "",
-            DumpFilter::Arp => " arp",
-            DumpFilter::Ip => " ip",
-        };
-        let script =
-            format!("echo __MINITCP_DUMP_PID=$$; exec tcpdump -eni {iface} -l{filter_arg}");
-        let mut cmd = Command::new("sudo");
-        cmd.args(["-n", "sh", "-c", &script])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        unsafe {
-            cmd.pre_exec(configure_child_process);
-        }
-        let mut child = cmd.spawn()?;
-        let command_pid = match child.stdout.as_mut().and_then(read_dump_pid) {
-            Some(pid) => Some(pid),
+        let script = format!(
+            "echo __MINITCP_DUMP_PID=$$; exec tcpdump -eni {iface} -l{}",
+            filter.filter_arg()
+        );
+        let mut proc =
+            Self::spawn_piped(Command::new("sudo").args(["-n", "sh", "-c", &script]), true)?;
+        let pid = proc
+            .child
+            .as_mut()
+            .and_then(|c| c.stdout.as_mut())
+            .and_then(read_dump_pid);
+        match pid {
+            Some(pid) => proc.command_pid = Some(pid),
             None => {
-                let _ = child.kill();
-                let _ = child.wait();
+                // No marker means sudo/tcpdump never got far enough to need the
+                // privileged stop path; just reap the process we spawned.
+                if let Some(mut child) = proc.child.take() {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
                 return Err(std::io::Error::other(
                     "tcpdump did not report its process ID",
                 ));
             }
-        };
-        Ok(Self {
-            child: Some(child),
-            privileged: true,
-            command_pid,
-            exit_status: None,
-            exit_error: None,
-        })
+        }
+        Ok(proc)
     }
 
     fn spawn_action(command: &str) -> std::io::Result<Self> {
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".into());
-        let mut cmd = Command::new(shell);
-        cmd.args(["-c", command])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        unsafe {
-            cmd.pre_exec(configure_child_process);
-        }
-        let child = cmd.spawn()?;
-        let command_pid = Some(child.id() as i32);
-        Ok(Self {
-            child: Some(child),
-            privileged: false,
-            command_pid,
-            exit_status: None,
-            exit_error: None,
-        })
+        Self::spawn_piped(Command::new(shell).args(["-c", command]), false)
     }
 
     fn take_stdout_stderr(
@@ -465,34 +462,47 @@ struct Lab {
     arp_out: u32,
 }
 
-fn setup_command(tx: &Sender<Msg>, program: &str, args: &[&str]) -> bool {
+/// Echo `$ program args` into the Actions pane, run it, and stream both of its
+/// output streams there. `None` means it could not run (already reported).
+fn run_capture(tx: &Sender<Msg>, program: &str, args: &[&str]) -> Option<std::process::Output> {
     let _ = tx.send(Msg::Action(format!("$ {program} {}", args.join(" "))));
     match crate::process::output_timeout(program, args, SHORT_COMMAND_TIMEOUT) {
         Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+            let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
             for line in stdout.lines().chain(stderr.lines()) {
                 let _ = tx.send(Msg::Action(line.to_string()));
             }
-            if output.status.success() {
-                true
-            } else {
-                let status = output.status.code().map_or_else(
-                    || "terminated by signal".to_string(),
-                    |code| format!("exited with status {code}"),
-                );
-                let _ = tx.send(Msg::Action(format!(
-                    "minitcp: error: `{program} {}` {status}",
-                    args.join(" ")
-                )));
-                false
-            }
+            Some(output)
         }
         Err(e) => {
             let _ = tx.send(Msg::Action(format!("minitcp: error: {e}")));
-            false
+            None
         }
     }
+}
+
+fn exit_note(status: std::process::ExitStatus) -> String {
+    status.code().map_or_else(
+        || "terminated by signal".to_string(),
+        |code| format!("exited with status {code}"),
+    )
+}
+
+/// One step of lab setup. Returns false so the caller can stop on first failure.
+fn setup_command(tx: &Sender<Msg>, program: &str, args: &[&str]) -> bool {
+    let Some(output) = run_capture(tx, program, args) else {
+        return false;
+    };
+    if output.status.success() {
+        return true;
+    }
+    let _ = tx.send(Msg::Action(format!(
+        "minitcp: error: `{program} {}` {}",
+        args.join(" "),
+        exit_note(output.status)
+    )));
+    false
 }
 
 fn ensure_tap(cfg: &Config, tx: &Sender<Msg>) {
@@ -605,30 +615,19 @@ fn tap_status(iface: &str, linux_addr: &str) -> (bool, String) {
     (up, addr)
 }
 
+/// A one-shot tool the user triggered (ping, ip neigh, ...).
 fn run_short(tx: &Sender<Msg>, program: &str, args: &[&str]) {
-    let shown = format!("$ {program} {}", args.join(" "));
-    let _ = tx.send(Msg::Action(shown));
-    match crate::process::output_timeout(program, args, SHORT_COMMAND_TIMEOUT) {
-        Ok(out) => {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            for line in stdout.lines().chain(stderr.lines()) {
-                let _ = tx.send(Msg::Action(line.to_string()));
-            }
-            if stdout.is_empty() && stderr.is_empty() {
-                let _ = tx.send(Msg::Action("(no output)".into()));
-            }
-            if !out.status.success() {
-                let status = out.status.code().map_or_else(
-                    || "terminated by signal".to_string(),
-                    |code| format!("exited with status {code}"),
-                );
-                let _ = tx.send(Msg::Action(format!("minitcp: error: command {status}")));
-            }
-        }
-        Err(e) => {
-            let _ = tx.send(Msg::Action(format!("minitcp: error: {e}")));
-        }
+    let Some(out) = run_capture(tx, program, args) else {
+        return;
+    };
+    if out.stdout.is_empty() && out.stderr.is_empty() {
+        let _ = tx.send(Msg::Action("(no output)".into()));
+    }
+    if !out.status.success() {
+        let _ = tx.send(Msg::Action(format!(
+            "minitcp: error: command {}",
+            exit_note(out.status)
+        )));
     }
 }
 
@@ -652,13 +651,7 @@ impl Lab {
             let _ = tx.send(Msg::Dump(
                 "TAP lives in the sidecar (`minitcp tap up`). tcpdump is not on this host.".into(),
             ));
-            ChildProc {
-                child: None,
-                privileged: true,
-                command_pid: None,
-                exit_status: None,
-                exit_error: None,
-            }
+            ChildProc::none()
         } else {
             match spawn_dump_with_retry(filter, &cfg.iface) {
                 Ok(mut d) => {
@@ -669,13 +662,7 @@ impl Lab {
                     let _ = tx.send(Msg::Dump(format!(
                         "minitcp: error: tcpdump not started: {e}"
                     )));
-                    ChildProc {
-                        child: None,
-                        privileged: true,
-                        command_pid: None,
-                        exit_status: None,
-                        exit_error: None,
-                    }
+                    ChildProc::none()
                 }
             }
         };
@@ -940,6 +927,26 @@ impl Lab {
         }
     }
 
+    /// Run a Linux tool against the lab, off the UI thread, reporting into the
+    /// Actions pane. When frames come from the TAP sidecar the tool has to run
+    /// in that container; otherwise it runs here, where some commands need sudo.
+    fn spawn_tool(&self, command: &[&str], local_sudo: bool) {
+        let tx = self.tx.clone();
+        let sidecar = self.cfg.fwd.is_some();
+        let mut words: Vec<String> = if sidecar {
+            vec!["docker".into(), "exec".into(), CONTAINER.into()]
+        } else if local_sudo {
+            vec!["sudo".into()]
+        } else {
+            Vec::new()
+        };
+        words.extend(command.iter().map(|word| word.to_string()));
+        thread::spawn(move || {
+            let args: Vec<&str> = words[1..].iter().map(String::as_str).collect();
+            run_short(&tx, &words[0], &args);
+        });
+    }
+
     fn handle_key(&mut self, key: KeyEvent) -> bool {
         if key.kind != KeyEventKind::Press {
             return false;
@@ -984,52 +991,16 @@ impl Lab {
                 self.command_input = Some(String::new());
             }
             KeyCode::Char('p') => {
-                let tx = self.tx.clone();
                 let addr = self.cfg.addr.to_string();
-                let sidecar = self.cfg.fwd.is_some();
-                thread::spawn(move || {
-                    if sidecar {
-                        run_short(
-                            &tx,
-                            "docker",
-                            &["exec", CONTAINER, "ping", "-c", "1", "-W", "1", &addr],
-                        );
-                    } else {
-                        run_short(&tx, "ping", &["-c", "1", "-W", "1", &addr]);
-                    }
-                });
+                self.spawn_tool(&["ping", "-c", "1", "-W", "1", &addr], false);
             }
             KeyCode::Char('n') => {
-                let tx = self.tx.clone();
                 let iface = self.cfg.iface.clone();
-                let sidecar = self.cfg.fwd.is_some();
-                thread::spawn(move || {
-                    if sidecar {
-                        run_short(
-                            &tx,
-                            "docker",
-                            &["exec", CONTAINER, "ip", "neigh", "show", "dev", &iface],
-                        );
-                    } else {
-                        run_short(&tx, "ip", &["neigh", "show", "dev", &iface]);
-                    }
-                });
+                self.spawn_tool(&["ip", "neigh", "show", "dev", &iface], false);
             }
             KeyCode::Char('f') => {
-                let tx = self.tx.clone();
                 let iface = self.cfg.iface.clone();
-                let sidecar = self.cfg.fwd.is_some();
-                thread::spawn(move || {
-                    if sidecar {
-                        run_short(
-                            &tx,
-                            "docker",
-                            &["exec", CONTAINER, "ip", "neigh", "flush", "dev", &iface],
-                        );
-                    } else {
-                        run_short(&tx, "sudo", &["ip", "neigh", "flush", "dev", &iface]);
-                    }
-                });
+                self.spawn_tool(&["ip", "neigh", "flush", "dev", &iface], true);
             }
             KeyCode::Char('r') => self.restart_stack(),
             KeyCode::Char('v') => self.toggle_verbose(),
