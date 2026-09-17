@@ -4,6 +4,12 @@ A small userspace TCP/IP stack in Rust. Linux keeps its stack on one side of a v
 
 Linux owns `10.0.0.1` on TAP interface `tap0`. MiniTCP pretends to be another machine at `10.0.0.2` with MAC `02:00:00:00:00:02`.
 
+## Status
+
+**Milestone 6 of 15 — ICMP echo.** Ethernet, ARP, IPv4 and ICMP work: `ping 10.0.0.2` gets a reply from this stack. UDP (milestone 7) and TCP (milestones 8–14) are not implemented yet; those packets are decoded, logged and dropped.
+
+The release number comes from [semantic-release](.releaserc.json) and tracks the published binary, not how far the stack has got — this line does that.
+
 Licensed under [MIT](LICENSE). Pull requests: [CONTRIBUTING.md](docs/CONTRIBUTING.md).
 
 Terms used in the code are defined in [GLOSSARY.md](docs/GLOSSARY.md).
