@@ -1,7 +1,7 @@
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
 
-use crate::proto::ethernet::MacAddress;
+use minitcp::proto::ethernet::MacAddress;
 
 use super::config::{Command, DropKind, HelpTopic, Partial};
 use super::error::{

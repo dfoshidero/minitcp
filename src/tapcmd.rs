@@ -5,7 +5,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::cli::Config;
-use crate::interface::fwd::DEFAULT_FWD;
+use crate::fwd::DEFAULT_FWD;
 use crate::process::{self, AllowedFailure};
 
 pub(crate) const CONTAINER: &str = "minitcp-tap";
@@ -178,7 +178,7 @@ fn wait_for_sidecar(cfg: &Config) -> io::Result<()> {
     let addr = cfg.fwd_addr();
     let deadline = Instant::now() + READY_TIMEOUT;
     loop {
-        if crate::interface::fwd::probe(&addr, READY_INTERVAL).is_ok() {
+        if crate::fwd::probe(&addr, READY_INTERVAL).is_ok() {
             return Ok(());
         }
         if !container_running()? {
@@ -274,4 +274,45 @@ fn local_linux_up(cfg: &Config) -> io::Result<()> {
     )?;
     crate::log::status::ok(format!("local TAP {} up ({})", cfg.iface, cidr));
     Ok(())
+}
+
+/// Create the TAP and give Linux an address (sidecar / local Linux).
+pub fn ensure_iface(name: &str, linux_addr: std::net::Ipv4Addr) -> io::Result<()> {
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (name, linux_addr);
+        Ok(())
+    }
+    #[cfg(target_os = "linux")]
+    {
+        use crate::process::AllowedFailure;
+
+        let user = std::env::var("USER").unwrap_or_else(|_| "root".into());
+        let add = ["tuntap", "add", "dev", name, "mode", "tap", "user", &user];
+        run_ip(&add, AllowedFailure::AlreadyExists)?;
+        let cidr = format!("{linux_addr}/24");
+        run_ip(
+            &["addr", "add", &cidr, "dev", name],
+            AllowedFailure::AlreadyExists,
+        )?;
+        run_ip(&["link", "set", "dev", name, "up"], AllowedFailure::None)?;
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn run_ip(args: &[&str], allowed: crate::process::AllowedFailure) -> io::Result<()> {
+    use crate::process::run_checked;
+
+    match run_checked("ip", args, allowed) {
+        Ok(()) => Ok(()),
+        Err(direct_error) => {
+            let sudo_args: Vec<_> = std::iter::once("ip").chain(args.iter().copied()).collect();
+            run_checked("sudo", &sudo_args, allowed).map_err(|sudo_error| {
+                io::Error::other(format!(
+                    "could not configure TAP directly ({direct_error}); sudo also failed ({sudo_error})"
+                ))
+            })
+        }
+    }
 }

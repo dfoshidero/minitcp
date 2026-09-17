@@ -1,3 +1,4 @@
+#![cfg(feature = "cli")]
 //! Black-box tests for the `minitcp` command line.
 //!
 //! The unit tests inside `src/` check individual functions. These run the real

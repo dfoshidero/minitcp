@@ -5,9 +5,25 @@ edition = "2024"
 license = "MIT"
 repository = "https://github.com/dfoshidero/minitcp"
 
+[lib]
+name = "minitcp"
+path = "src/lib.rs"
+
+[[bin]]
+name = "minitcp"
+path = "src/main.rs"
+required-features = ["cli"]
+
+[features]
+default = ["cli"]
+# The `minitcp` command: terminal UI, config file, update check.
+cli = ["tap", "dep:crossterm", "dep:ratatui", "dep:toml", "dep:ureq"]
+# The Linux TAP binding. The only part of the library that needs libc.
+tap = ["dep:libc"]
+
 [dependencies]
-crossterm = "0.28"
-libc = "0.2"
-ratatui = "0.29"
-toml = "0.8"
-ureq = "2"
+crossterm = { version = "0.28", optional = true }
+libc = { version = "0.2", optional = true }
+ratatui = { version = "0.29", optional = true }
+toml = { version = "0.8", optional = true }
+ureq = { version = "2", optional = true }
