@@ -60,6 +60,19 @@ jobs:
         if: needs.classify.outputs.checks == 'true'
       - uses: dtolnay/rust-toolchain@stable
         if: needs.classify.outputs.checks == 'true'
+        with:
+          components: rustfmt, clippy
+      - name: Format
+        if: needs.classify.outputs.checks == 'true'
+        run: cargo fmt --check
+      - name: Lint
+        if: needs.classify.outputs.checks == 'true'
+        run: cargo clippy --all-targets -- -D warnings
+      # The library is published as dependency-free; this fails if anything
+      # behind the `cli` or `tap` features leaks into it.
+      - name: Lint library without default features
+        if: needs.classify.outputs.checks == 'true'
+        run: cargo clippy --lib --no-default-features -- -D warnings
       - run: cargo test
         if: needs.classify.outputs.checks == 'true'
 
