@@ -1,3 +1,16 @@
+# [1.5.0](https://github.com/dfoshidero/minitcp/compare/v1.4.0...v1.5.0) (2026-09-17)
+
+
+### Bug Fixes
+
+* own the TAP by uid and treat an existing device as already up ([#26](https://github.com/dfoshidero/minitcp/issues/26)) ([9fb8a08](https://github.com/dfoshidero/minitcp/commit/9fb8a08f2ecd44692d643aaf20e28b6b3d1b420f))
+* treat zero-length records as corruption and keep the bridge on loopback ([c4ecb25](https://github.com/dfoshidero/minitcp/commit/c4ecb25f0f659f1c5085e503476d2b17118c3fba))
+
+
+### Features
+
+* replace string parse errors with typed ParseError and DropReason ([594ab5e](https://github.com/dfoshidero/minitcp/commit/594ab5ed4b3123947167333923d42e3563bfc7f4))
+
 # [1.4.0](https://github.com/dfoshidero/minitcp/compare/v1.3.1...v1.4.0) (2026-09-17)
 
 
