@@ -213,7 +213,13 @@ fn display_command(program: &str, args: &[&str]) -> String {
 
 fn is_already_exists(detail: &str) -> bool {
     let lower = detail.to_ascii_lowercase();
-    lower.contains("file exists") || lower.contains("already exists")
+    lower.contains("file exists")
+        || lower.contains("already exists")
+        // `ip tuntap add` on a name that is already a TAP fails the TUNSETIFF
+        // ioctl with EBUSY rather than EEXIST. For our purposes the device is
+        // simply already there, so bring-up should carry on and try to attach.
+        || lower.contains("device or resource busy")
+        || lower.contains("address already assigned")
 }
 
 fn is_does_not_exist(detail: &str) -> bool {
@@ -246,6 +252,37 @@ mod tests {
             AllowedFailure::AlreadyExists,
         )
         .unwrap();
+    }
+
+    #[test]
+    fn an_existing_tap_is_idempotent_however_the_kernel_words_it() {
+        // `ip tuntap add` on an existing TAP fails the TUNSETIFF ioctl with
+        // EBUSY, and `ip addr add` on a repeat says "address already assigned".
+        // Both mean "already there", so bring-up must be repeatable.
+        for detail in [
+            "ioctl(TUNSETIFF): Device or resource busy",
+            "RTNETLINK answers: File exists",
+            "RTNETLINK answers: Address already assigned",
+        ] {
+            check_output(
+                "ip",
+                &["tuntap", "add"],
+                failed(detail),
+                AllowedFailure::AlreadyExists,
+            )
+            .unwrap_or_else(|e| panic!("{detail} should be tolerated: {e}"));
+        }
+    }
+
+    #[test]
+    fn a_real_failure_is_still_a_failure() {
+        check_output(
+            "ip",
+            &["tuntap", "add"],
+            failed("Operation not permitted"),
+            AllowedFailure::AlreadyExists,
+        )
+        .unwrap_err();
     }
 
     #[test]

@@ -23,6 +23,18 @@ enum DockerState {
     Unavailable(String),
 }
 
+/// Who should own the TAP, as a numeric uid.
+///
+/// `$USER` is unset in plenty of non-login shells (this is how the Dev Container
+/// starts), and the two bring-up paths used to guess differently — "netstack"
+/// here, "root" there. Guessing "root" produced a TAP owned by uid 0 that the
+/// caller then could not open, failing with a bare EPERM. The kernel wants a
+/// uid anyway, so ask the process rather than the environment.
+fn owner_uid() -> String {
+    // SAFETY: getuid() cannot fail and touches no memory we own.
+    unsafe { libc::getuid() }.to_string()
+}
+
 pub(crate) fn tap_up(cfg: &Config) -> io::Result<()> {
     match docker_state()? {
         DockerState::Ready => return docker_up(cfg),
@@ -253,7 +265,7 @@ fn dump_sidecar_logs() {
 }
 
 fn local_linux_up(cfg: &Config) -> io::Result<()> {
-    let user = std::env::var("USER").unwrap_or_else(|_| "netstack".into());
+    let user = owner_uid();
     process::run_checked(
         "sudo",
         &[
@@ -287,7 +299,7 @@ pub(crate) fn ensure_iface(name: &str, linux_addr: std::net::Ipv4Addr) -> io::Re
     {
         use crate::process::AllowedFailure;
 
-        let user = std::env::var("USER").unwrap_or_else(|_| "root".into());
+        let user = owner_uid();
         let add = ["tuntap", "add", "dev", name, "mode", "tap", "user", &user];
         run_ip(&add, AllowedFailure::AlreadyExists)?;
         let cidr = format!("{linux_addr}/24");
