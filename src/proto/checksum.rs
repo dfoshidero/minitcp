@@ -5,14 +5,14 @@
 /// Write does the inverse: put 0 in that field, run this, then store the result.
 pub fn internet_checksum(bytes: &[u8]) -> u16 {
     let mut sum: u32 = 0;
-    let mut chunks = bytes.chunks_exact(2);
+    let (pairs, remainder) = bytes.as_chunks::<2>();
 
-    for chunk in &mut chunks {
+    for pair in pairs {
         // Add 16-bit pieces. u32 is a wider bucket so overflow is not lost — we need it below.
-        sum += u16::from_be_bytes([chunk[0], chunk[1]]) as u32;
+        sum += u16::from_be_bytes(*pair) as u32;
     }
 
-    if let [last] = chunks.remainder() {
+    if let [last] = remainder {
         // This algorithm always adds two-byte pairs. A leftover byte is treated as a pair
         // whose second byte is zero. Shift left 8 to put the leftover in the first slot of that pair.
         sum += (*last as u32) << 8;
