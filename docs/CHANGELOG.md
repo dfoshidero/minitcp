@@ -1,3 +1,10 @@
+# [1.4.0](https://github.com/dfoshidero/minitcp/compare/v1.3.1...v1.4.0) (2026-09-17)
+
+
+### Features
+
+* expose proto and interface as a dependency-free library crate ([#19](https://github.com/dfoshidero/minitcp/issues/19)) ([bdb37c6](https://github.com/dfoshidero/minitcp/commit/bdb37c63f8f24e9d0eb57df48d48703bc51e29a5))
+
 ## [1.3.1](https://github.com/dfoshidero/minitcp/compare/v1.3.0...v1.3.1) (2026-08-19)
 
 
