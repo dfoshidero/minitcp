@@ -29,6 +29,24 @@ pub fn internet_checksum(bytes: &[u8]) -> u16 {
     !sum as u16
 }
 
+/// IPv4 pseudo-header + transport segment (TCP/UDP) checksum (RFC 1071).
+/// The 12 extra bytes are checksum input only; they are not transported.
+pub fn transport_checksum_ipv4(
+    src: [u8; 4],
+    dst: [u8; 4],
+    protocol: u8,
+    segment: &[u8],
+) -> u16 {
+    let mut bytes = Vec::with_capacity(12 + segment.len() + 1);
+    bytes.extend_from_slice(&src);
+    bytes.extend_from_slice(&dst);
+    bytes.push(0);
+    bytes.push(protocol);
+    bytes.extend_from_slice(&(segment.len() as u16).to_be_bytes());
+    bytes.extend_from_slice(segment);
+    internet_checksum(&bytes)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
