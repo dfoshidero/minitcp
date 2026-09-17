@@ -7,8 +7,8 @@ mod file;
 
 use std::path::{Path, PathBuf};
 
-pub use config::{Command, Config, DEFAULT_CONFIG, DropKind, HelpTopic};
-pub use error::{ParseError, usage_topic};
+pub(crate) use config::{Command, Config, DEFAULT_CONFIG, DropKind, HelpTopic};
+pub(crate) use error::{ParseError, usage_topic};
 
 use config::{Partial, apply_partial, default_linux_addr};
 use error::USAGE_CONFIG;
@@ -25,7 +25,7 @@ fn is_setter(command: &Command) -> bool {
 }
 
 /// Parse argv without the program name. `cwd` is where `./minitcp.toml` is sought.
-pub fn parse_from(args: &[String], cwd: &Path) -> Result<Config, ParseError> {
+pub(crate) fn parse_from(args: &[String], cwd: &Path) -> Result<Config, ParseError> {
     let cli = args::parse_cli(args)?;
     if let Some(command @ (Command::Help(_) | Command::Version)) = &cli.command {
         let mut cfg = Config::defaults();
@@ -67,7 +67,7 @@ pub fn parse_from(args: &[String], cwd: &Path) -> Result<Config, ParseError> {
     Ok(cfg)
 }
 
-pub fn parse(args: &[String]) -> Result<Config, ParseError> {
+pub(crate) fn parse(args: &[String]) -> Result<Config, ParseError> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     parse_from(args, &cwd)
 }

@@ -10,24 +10,24 @@ use std::time::{Duration, Instant};
 use minitcp::interface::FrameIo;
 use minitcp::interface::tap::TapInterface;
 
-pub const DEFAULT_FWD: &str = "127.0.0.1:7946";
-pub const DEFAULT_LISTEN: &str = "0.0.0.0:7946";
+pub(crate) const DEFAULT_FWD: &str = "127.0.0.1:7946";
+pub(crate) const DEFAULT_LISTEN: &str = "0.0.0.0:7946";
 
 const CONNECT_RETRY: Duration = Duration::from_secs(8);
 const CONNECT_INTERVAL: Duration = Duration::from_millis(200);
 const CONNECT_ATTEMPT_TIMEOUT: Duration = Duration::from_millis(250);
 const MAX_FRAME: usize = 65_535;
 
-pub struct TcpFrames {
+pub(crate) struct TcpFrames {
     stream: TcpStream,
 }
 
 impl TcpFrames {
-    pub fn connect(addr: &str) -> io::Result<Self> {
+    pub(crate) fn connect(addr: &str) -> io::Result<Self> {
         Self::connect_with_retry(addr, CONNECT_RETRY, CONNECT_INTERVAL)
     }
 
-    pub fn connect_with_retry(
+    pub(crate) fn connect_with_retry(
         addr: &str,
         timeout: Duration,
         interval: Duration,
@@ -52,7 +52,7 @@ impl TcpFrames {
     }
 }
 
-pub fn probe(addr: &str, timeout: Duration) -> io::Result<()> {
+pub(crate) fn probe(addr: &str, timeout: Duration) -> io::Result<()> {
     let addresses = resolve(addr)?;
     connect_addresses(&addresses, timeout).map(drop)
 }
@@ -157,7 +157,7 @@ fn write_record(stream: &mut impl Write, frame: &[u8]) -> io::Result<()> {
     stream.flush()
 }
 
-pub fn run_bridge(listen: &str, tap: TapInterface) -> io::Result<()> {
+pub(crate) fn run_bridge(listen: &str, tap: TapInterface) -> io::Result<()> {
     let listener = TcpListener::bind(listen)?;
     crate::log::status::info(format!("bridge listening on {listen}"));
     accept_loop(listener, tap)

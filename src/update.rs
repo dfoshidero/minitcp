@@ -6,7 +6,7 @@ use std::time::{Duration, SystemTime};
 const CACHE_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 const REPO: &str = "dfoshidero/minitcp";
 
-pub fn nag_if_outdated() {
+pub(crate) fn nag_if_outdated() {
     if std::env::var_os("MINITCP_NO_UPDATE_CHECK").is_some() {
         return;
     }

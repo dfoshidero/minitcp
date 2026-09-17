@@ -17,7 +17,7 @@ enum Family {
     Pcap,
 }
 
-pub fn parse_mac(s: &str) -> Result<MacAddress, String> {
+pub(crate) fn parse_mac(s: &str) -> Result<MacAddress, String> {
     let sep = if s.contains(':') {
         ':'
     } else if s.contains('-') {

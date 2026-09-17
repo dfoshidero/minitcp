@@ -58,9 +58,9 @@ usage: --config FILE           TOML instead of ./minitcp.toml
   Omit it to use ./minitcp.toml if that file is present.";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParseError {
-    pub message: String,
-    pub usage: Option<String>,
+pub(crate) struct ParseError {
+    pub(crate) message: String,
+    pub(crate) usage: Option<String>,
 }
 
 impl ParseError {
@@ -86,7 +86,7 @@ impl ParseError {
         }
     }
 
-    pub fn report(&self) -> String {
+    pub(crate) fn report(&self) -> String {
         match (&self.message.is_empty(), &self.usage) {
             (true, Some(usage)) => format!("{usage}\n"),
             (false, Some(usage)) => format!("error: {}\n\n{usage}\n", self.message),
@@ -142,7 +142,7 @@ pub(crate) fn missing_value(flag: &str) -> ParseError {
     ParseError::with_usage(format!("{flag} needs a value"), flag_usage(flag))
 }
 
-pub fn usage_topic(topic: HelpTopic) -> String {
+pub(crate) fn usage_topic(topic: HelpTopic) -> String {
     match topic {
         HelpTopic::Full => usage(),
         HelpTopic::Tap => format!("{USAGE_TAP}\n"),
@@ -151,7 +151,7 @@ pub fn usage_topic(topic: HelpTopic) -> String {
     }
 }
 
-pub fn usage() -> String {
+pub(crate) fn usage() -> String {
     let color = std::io::stderr().is_terminal();
     let title = "minitcp — userspace TCP/IP lab";
     let title = if color {

@@ -6,13 +6,13 @@ use minitcp::proto::ethernet::MacAddress;
 
 use super::error::{ParseError, flag_usage};
 
-pub const DEFAULT_IFACE: &str = "tap0";
-pub const DEFAULT_TUN: &str = "/dev/net/tun";
-pub const DEFAULT_TTL: u8 = 64;
-pub const DEFAULT_CONFIG: &str = "minitcp.toml";
+pub(crate) const DEFAULT_IFACE: &str = "tap0";
+pub(crate) const DEFAULT_TUN: &str = "/dev/net/tun";
+pub(crate) const DEFAULT_TTL: u8 = 64;
+pub(crate) const DEFAULT_CONFIG: &str = "minitcp.toml";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum HelpTopic {
+pub(crate) enum HelpTopic {
     Full,
     Tap,
     Identity,
@@ -20,7 +20,7 @@ pub enum HelpTopic {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Command {
+pub(crate) enum Command {
     Run,
     Stack,
     Version,
@@ -40,14 +40,14 @@ pub enum Command {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DropKind {
+pub(crate) enum DropKind {
     Arp,
     Icmp,
     Ip,
 }
 
 impl DropKind {
-    pub fn parse(name: &str) -> Result<Self, ParseError> {
+    pub(crate) fn parse(name: &str) -> Result<Self, ParseError> {
         match name.trim().to_ascii_lowercase().as_str() {
             "arp" => Ok(Self::Arp),
             "icmp" => Ok(Self::Icmp),
@@ -59,7 +59,7 @@ impl DropKind {
         }
     }
 
-    pub fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         match self {
             Self::Arp => "arp",
             Self::Icmp => "icmp",
@@ -69,29 +69,29 @@ impl DropKind {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Config {
-    pub command: Command,
-    pub iface: String,
-    pub addr: Ipv4Addr,
-    pub mac: MacAddress,
-    pub linux_addr: Ipv4Addr,
-    pub tun: PathBuf,
-    pub write: Option<PathBuf>,
-    pub hex: bool,
-    pub quiet: bool,
-    pub count: Option<u64>,
-    pub drop: Vec<DropKind>,
-    pub drop_pct: u8,
-    pub ttl: u8,
-    pub icmp_id: Option<u16>,
-    pub fwd: Option<String>,
-    pub listen: String,
-    pub offline: bool,
-    pub config_path: PathBuf,
+pub(crate) struct Config {
+    pub(crate) command: Command,
+    pub(crate) iface: String,
+    pub(crate) addr: Ipv4Addr,
+    pub(crate) mac: MacAddress,
+    pub(crate) linux_addr: Ipv4Addr,
+    pub(crate) tun: PathBuf,
+    pub(crate) write: Option<PathBuf>,
+    pub(crate) hex: bool,
+    pub(crate) quiet: bool,
+    pub(crate) count: Option<u64>,
+    pub(crate) drop: Vec<DropKind>,
+    pub(crate) drop_pct: u8,
+    pub(crate) ttl: u8,
+    pub(crate) icmp_id: Option<u16>,
+    pub(crate) fwd: Option<String>,
+    pub(crate) listen: String,
+    pub(crate) offline: bool,
+    pub(crate) config_path: PathBuf,
 }
 
 impl Config {
-    pub fn defaults() -> Self {
+    pub(crate) fn defaults() -> Self {
         let addr = Ipv4Addr::from(OUR_IP);
         Self {
             command: Command::Run,
@@ -115,30 +115,30 @@ impl Config {
         }
     }
 
-    pub fn our_ip_bytes(&self) -> [u8; 4] {
+    pub(crate) fn our_ip_bytes(&self) -> [u8; 4] {
         self.addr.octets()
     }
 
-    pub fn verbose(&self) -> bool {
+    pub(crate) fn verbose(&self) -> bool {
         !self.quiet
     }
 
     /// Host stack talks to the TAP sidecar over TCP unless `/dev/net/tun` is here.
-    pub fn use_fwd(&self) -> bool {
+    pub(crate) fn use_fwd(&self) -> bool {
         if self.fwd.is_some() {
             return true;
         }
         !self.tun.exists()
     }
 
-    pub fn fwd_addr(&self) -> String {
+    pub(crate) fn fwd_addr(&self) -> String {
         self.fwd
             .clone()
             .unwrap_or_else(|| crate::fwd::DEFAULT_FWD.into())
     }
 
     /// Flags the TUI child `minitcp stack` process should inherit.
-    pub fn child_stack_args(&self, verbose: bool) -> Vec<String> {
+    pub(crate) fn child_stack_args(&self, verbose: bool) -> Vec<String> {
         fn flag(args: &mut Vec<String>, name: &str, value: String) {
             args.extend([name.to_string(), value]);
         }
@@ -181,27 +181,27 @@ impl Config {
 
 #[derive(Default)]
 pub(crate) struct Partial {
-    pub command: Option<Command>,
-    pub iface: Option<String>,
-    pub addr: Option<Ipv4Addr>,
-    pub mac: Option<MacAddress>,
-    pub linux_addr: Option<Ipv4Addr>,
-    pub tun: Option<PathBuf>,
-    pub write: Option<PathBuf>,
-    pub hex: Option<bool>,
-    pub quiet: Option<bool>,
-    pub count: Option<u64>,
-    pub drop: Option<Vec<DropKind>>,
-    pub drop_pct: Option<u8>,
-    pub ttl: Option<u8>,
-    pub icmp_id: Option<u16>,
-    pub config: Option<PathBuf>,
-    pub fwd: Option<String>,
-    pub listen: Option<String>,
-    pub offline: Option<bool>,
+    pub(crate) command: Option<Command>,
+    pub(crate) iface: Option<String>,
+    pub(crate) addr: Option<Ipv4Addr>,
+    pub(crate) mac: Option<MacAddress>,
+    pub(crate) linux_addr: Option<Ipv4Addr>,
+    pub(crate) tun: Option<PathBuf>,
+    pub(crate) write: Option<PathBuf>,
+    pub(crate) hex: Option<bool>,
+    pub(crate) quiet: Option<bool>,
+    pub(crate) count: Option<u64>,
+    pub(crate) drop: Option<Vec<DropKind>>,
+    pub(crate) drop_pct: Option<u8>,
+    pub(crate) ttl: Option<u8>,
+    pub(crate) icmp_id: Option<u16>,
+    pub(crate) config: Option<PathBuf>,
+    pub(crate) fwd: Option<String>,
+    pub(crate) listen: Option<String>,
+    pub(crate) offline: Option<bool>,
 }
 
-pub fn default_linux_addr(addr: Ipv4Addr) -> Ipv4Addr {
+pub(crate) fn default_linux_addr(addr: Ipv4Addr) -> Ipv4Addr {
     let o = addr.octets();
     Ipv4Addr::new(o[0], o[1], o[2], 1)
 }

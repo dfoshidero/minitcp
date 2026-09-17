@@ -8,13 +8,13 @@ const DEFAULT_COMMAND_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_COMMAND_OUTPUT: usize = 1024 * 1024;
 
 #[derive(Clone, Copy)]
-pub enum AllowedFailure {
+pub(crate) enum AllowedFailure {
     None,
     AlreadyExists,
     DoesNotExist,
 }
 
-pub fn run_checked(program: &str, args: &[&str], allowed: AllowedFailure) -> io::Result<()> {
+pub(crate) fn run_checked(program: &str, args: &[&str], allowed: AllowedFailure) -> io::Result<()> {
     check_output(
         program,
         args,
@@ -23,7 +23,7 @@ pub fn run_checked(program: &str, args: &[&str], allowed: AllowedFailure) -> io:
     )
 }
 
-pub fn check_output(
+pub(crate) fn check_output(
     program: &str,
     args: &[&str],
     output: Output,
@@ -58,7 +58,11 @@ pub fn check_output(
     )))
 }
 
-pub fn output_timeout(program: &str, args: &[&str], timeout: Duration) -> io::Result<Output> {
+pub(crate) fn output_timeout(
+    program: &str,
+    args: &[&str],
+    timeout: Duration,
+) -> io::Result<Output> {
     let mut command = Command::new(program);
     command
         .args(args)
@@ -192,7 +196,7 @@ fn join_reader(
         .map_err(|_| io::Error::other(format!("{stream} reader thread panicked")))?
 }
 
-pub fn output_detail(output: &Output) -> String {
+pub(crate) fn output_detail(output: &Output) -> String {
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     if !stderr.is_empty() {
         return stderr;
