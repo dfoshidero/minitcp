@@ -7,7 +7,9 @@
 
 use std::net::Ipv4Addr;
 
-use crate::event::{ArpOperation, Dropped, Echo, Endpoints, Layer, Outcome, Scope, Step};
+use crate::event::{
+    ArpOperation, DropReason, Dropped, Echo, Endpoints, Layer, Outcome, Scope, Step,
+};
 use crate::proto::arp::{OUR_IP, OUR_MAC, reply_for};
 use crate::proto::ethernet::{EthernetFrame, EthernetType, MacAddress};
 use crate::proto::icmp::{make_echo_reply, set_echo_id};
@@ -102,15 +104,15 @@ impl Stack {
         out.link = Some(Endpoints::new(frame.source, frame.destination));
 
         if drop_pct_hit(self.config.drop_pct, &mut self.rng) {
-            out.drop_at("ethernet", "L2", Scope::Link, "random drop");
+            out.drop_at("ethernet", "L2", Scope::Link, DropReason::RandomLoss);
             return out;
         }
         if self.drops(DropKind::Arp) && frame.ethertype == EthernetType::Arp {
-            out.drop_at("arp", "L2", Scope::Link, "dropped");
+            out.drop_at("arp", "L2", Scope::Link, DropReason::Filtered);
             return out;
         }
         if self.drops(DropKind::Ip) && frame.ethertype == EthernetType::Ipv4 {
-            out.drop_at("ipv4", "L3", Scope::Link, "dropped");
+            out.drop_at("ipv4", "L3", Scope::Link, DropReason::Filtered);
             return out;
         }
 
@@ -148,7 +150,7 @@ impl Stack {
         };
 
         let Some(asked) = addresses else {
-            out.drop_at("arp", "L2", Scope::Link, "truncated ARP payload");
+            out.drop_at("arp", "L2", Scope::Link, DropReason::TruncatedArp);
             return;
         };
 
@@ -202,11 +204,11 @@ impl Stack {
         match packet.protocol {
             Protocol::Icmp => {
                 if packet.destination.octets() != our_ip {
-                    out.drop_at("icmp", "L3", Scope::Payload, "not for us");
+                    out.drop_at("icmp", "L3", Scope::Payload, DropReason::NotForUs);
                     return;
                 }
                 if self.drops(DropKind::Icmp) {
-                    out.drop_at("icmp", "L3", Scope::Payload, "dropped");
+                    out.drop_at("icmp", "L3", Scope::Payload, DropReason::Filtered);
                     return;
                 }
                 out.step_in(icmp_layer(packet.payload));
@@ -262,15 +264,10 @@ impl Stack {
                 } else {
                     "tcp"
                 };
-                out.drop_at(layer, "L4", Scope::Payload, "not implemented");
+                out.drop_at(layer, "L4", Scope::Payload, DropReason::NotImplemented);
             }
             Protocol::Unknown(n) => {
-                out.drop_at(
-                    "ipv4",
-                    "L3",
-                    Scope::Network,
-                    format!("unknown protocol {n}"),
-                );
+                out.drop_at("ipv4", "L3", Scope::Network, DropReason::UnknownProtocol(n));
             }
         }
     }
@@ -286,7 +283,7 @@ impl Outcome {
         layer: &'static str,
         osi: &'static str,
         scope: Scope,
-        reason: impl Into<String>,
+        reason: impl Into<DropReason>,
     ) {
         self.steps.push(Step::Drop(Dropped {
             layer,
@@ -555,7 +552,7 @@ mod tests {
             panic!("expected a drop");
         };
         assert_eq!(dropped.layer, "tcp");
-        assert_eq!(dropped.reason, "not implemented");
+        assert_eq!(dropped.reason, DropReason::NotImplemented);
     }
 
     #[test]
