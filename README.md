@@ -50,7 +50,7 @@ ping 10.0.0.2
 
 ## Open the Dev Container
 
-You need Docker running (Docker Engine on Linux, or Docker Desktop with WSL2). Open this folder in Cursor or VS Code with the Dev Containers extension.
+You need Docker running (Docker Engine on Linux, or Docker Desktop with WSL2). You can this folder in VS Code with the Dev Containers extension - or launch the Dev Container with docker and connect to it inside any IDE.
 
 If you use WSL, confirm Docker is reachable, then open the repo from WSL:
 
