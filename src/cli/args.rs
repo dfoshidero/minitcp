@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use minitcp::proto::ethernet::MacAddress;
 
-use super::config::{Command, DropKind, HelpTopic, Partial};
+use super::config::{Command, DropKind, HelpTopic, Partial, parse_drop_kind};
 use super::error::{
     ParseError, USAGE_COMMANDS, USAGE_IDENTITY, USAGE_PCAP, USAGE_REPLAY, USAGE_TAP, flag_usage,
     missing_value,
@@ -50,7 +50,7 @@ pub(crate) fn parse_drop_list(s: &str) -> Result<Vec<DropKind>, ParseError> {
         if part.trim().is_empty() {
             continue;
         }
-        let kind = DropKind::parse(part)?;
+        let kind = parse_drop_kind(part)?;
         if !out.contains(&kind) {
             out.push(kind);
         }

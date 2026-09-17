@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use super::args::{parse_drop_list, parse_ipv4, parse_mac};
-use super::config::{DropKind, Partial};
+use super::config::{DropKind, Partial, parse_drop_kind};
 use super::error::{ParseError, USAGE_CONFIG, flag_usage};
 
 fn toml_string(v: &::toml::Value, key: &str) -> Result<String, ParseError> {
@@ -92,7 +92,7 @@ fn toml_drop(value: &::toml::Value) -> Result<Vec<DropKind>, ParseError> {
                 let name = item.as_str().ok_or_else(|| {
                     ParseError::with_usage("drop entries must be strings", flag_usage("--drop"))
                 })?;
-                joined.push(DropKind::parse(name)?);
+                joined.push(parse_drop_kind(name)?);
             }
             if joined.is_empty() {
                 return Err(ParseError::with_usage(

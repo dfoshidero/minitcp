@@ -5,10 +5,14 @@
 //   23:12:05  [IN]   ethernet  L2  02:00:… -> 02:00:…  ethertype 0x0800
 // IPv4/ARP [..] keep src -> dst. ICMP/TCP/UDP sit under IPv4 (they are its payload).
 
+use std::fmt::Display;
 use std::io::{self, IsTerminal, Write};
 use std::sync::Mutex;
 
 use crossterm::style::Stylize;
+
+use minitcp::event::{Endpoints, Layer, Outcome, Scope, Step};
+use minitcp::proto::ipv4::Protocol;
 
 static OUTPUT_ERROR: Mutex<Option<io::Error>> = Mutex::new(None);
 
@@ -132,6 +136,222 @@ pub(crate) fn emit_inside(when: &str, verb: Verb, layer: &str, osi: &str, reason
         reason,
     }
     .emit_at(when);
+}
+
+// ---------------------------------------------------------------------------
+// Rendering an Outcome
+//
+// `Stack::handle` decides; this decides how it looks. Verbose prints one line
+// per layer, indented under the packet that carried it. Quiet prints one line
+// per completed exchange, plus anything that was dropped.
+// ---------------------------------------------------------------------------
+
+/// "source -> destination", for either MACs (L2) or IPv4 addresses (L3).
+pub(crate) fn pair(src: impl Display, dst: impl Display) -> String {
+    format!("{src} -> {dst}")
+}
+
+fn endpoints<T: Display + Copy>(ends: Option<Endpoints<T>>) -> String {
+    ends.map(|e| pair(e.source, e.destination))
+        .unwrap_or_default()
+}
+
+fn protocol_name(protocol: Protocol) -> String {
+    match protocol {
+        Protocol::Icmp => "icmp".into(),
+        Protocol::Udp => "udp".into(),
+        Protocol::Tcp => "tcp".into(),
+        Protocol::Unknown(n) => format!("protocol {n}"),
+    }
+}
+
+fn icmp_detail(kind: u8, code: u8, echo: Option<minitcp::event::Echo>, len: usize) -> String {
+    match echo {
+        None => "truncated".into(),
+        Some(e) => format!(
+            "type={kind} code={code} id={} seq={}  len={len}",
+            e.id, e.sequence
+        ),
+    }
+}
+
+pub(crate) fn render(when: &str, outcome: &Outcome, verbose: bool) {
+    if verbose {
+        render_verbose(when, outcome);
+    } else {
+        render_quiet(when, outcome);
+    }
+}
+
+/// Only the first line of a frame carries the clock; the rest hang under it.
+fn emit_line(
+    first: &mut bool,
+    when: &str,
+    verb: Verb,
+    layer: &str,
+    osi: &str,
+    addr: &str,
+    detail: &str,
+) {
+    if *first {
+        emit_at(when, verb, layer, osi, addr, detail);
+        *first = false;
+    } else {
+        emit_cont(when, verb, layer, osi, addr, detail);
+    }
+}
+
+fn render_verbose(when: &str, outcome: &Outcome) {
+    let mut first = true;
+    for step in &outcome.steps {
+        match step {
+            Step::In(layer) => render_layer(when, &mut first, layer, false),
+            Step::Out(layer) => render_layer(when, &mut first, layer, true),
+            Step::Drop(dropped) => match dropped.scope {
+                // Already sits under an ipv4 line that showed the addresses.
+                Scope::Payload => {
+                    emit_inside(
+                        when,
+                        Verb::Drop,
+                        dropped.layer,
+                        dropped.osi,
+                        &dropped.reason,
+                    );
+                    first = false;
+                }
+                Scope::Network => emit_line(
+                    &mut first,
+                    when,
+                    Verb::Drop,
+                    dropped.layer,
+                    dropped.osi,
+                    "",
+                    &dropped.reason,
+                ),
+                Scope::Link => emit_line(
+                    &mut first,
+                    when,
+                    Verb::Drop,
+                    dropped.layer,
+                    dropped.osi,
+                    &endpoints(outcome.link),
+                    &dropped.reason,
+                ),
+            },
+        }
+    }
+}
+
+fn render_layer(when: &str, first: &mut bool, layer: &Layer, outbound: bool) {
+    match *layer {
+        Layer::Ethernet {
+            source,
+            destination,
+            ethertype,
+        } => {
+            let verb = if outbound { Verb::Out } else { Verb::In };
+            emit_line(
+                first,
+                when,
+                verb,
+                "ethernet",
+                "L2",
+                &pair(source, destination),
+                &format!("ethertype 0x{ethertype:04x}"),
+            );
+        }
+        Layer::Arp {
+            addresses,
+            sender_mac,
+            ..
+        } => {
+            let detail = match sender_mac {
+                Some(mac) => format!("is-at {mac}"),
+                None => "who-has".into(),
+            };
+            emit_line(
+                first,
+                when,
+                Verb::More,
+                "arp",
+                "L2",
+                &endpoints(addresses),
+                &detail,
+            );
+        }
+        Layer::Ipv4 {
+            source,
+            destination,
+            ttl,
+            protocol,
+            payload_len,
+        } => emit_line(
+            first,
+            when,
+            Verb::More,
+            "ipv4",
+            "L3",
+            &pair(source, destination),
+            &format!(
+                "ttl={ttl} proto={} payload={payload_len}",
+                protocol_name(protocol)
+            ),
+        ),
+        // ICMP is IPv4's payload, so it is drawn as a child of the ipv4 line.
+        Layer::Icmp {
+            kind,
+            code,
+            echo,
+            len,
+        } => {
+            emit_inside(
+                when,
+                Verb::More,
+                "icmp",
+                "L3",
+                &icmp_detail(kind, code, echo, len),
+            );
+            *first = false;
+        }
+    }
+}
+
+fn render_quiet(when: &str, outcome: &Outcome) {
+    for step in &outcome.steps {
+        if let Step::Drop(dropped) = step {
+            let addr = match dropped.scope {
+                Scope::Link => endpoints(outcome.link),
+                Scope::Network | Scope::Payload => endpoints(outcome.network),
+            };
+            emit_at(
+                when,
+                Verb::Drop,
+                dropped.layer,
+                dropped.osi,
+                &addr,
+                &dropped.reason,
+            );
+        }
+    }
+
+    // Quiet mode reports exchanges, not packets: one line when we answered.
+    if outcome.reply.is_none() {
+        return;
+    }
+    if let Some(Layer::Arp { addresses, .. }) = outcome.inbound(|l| matches!(l, Layer::Arp { .. }))
+    {
+        emit_quiet(when, "arp", &endpoints(*addresses), "who-has");
+    } else if let Some(Layer::Icmp { echo, len, .. }) =
+        outcome.inbound(|l| matches!(l, Layer::Icmp { .. }))
+    {
+        let (id, seq) = echo.map(|e| (e.id, e.sequence)).unwrap_or((0, 0));
+        emit_quiet(
+            when,
+            "icmp",
+            &endpoints(outcome.network),
+            &format!("echo id={id} seq={seq}  len={len}"),
+        );
+    }
 }
 
 fn write_line(writer: &mut impl Write, line: &str) -> io::Result<()> {

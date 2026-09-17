@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use minitcp::proto::arp::OUR_MAC;
 use minitcp::proto::ethernet::MacAddress;
+use minitcp::stack::DropKind;
 
 fn args(parts: &[&str]) -> Vec<String> {
     parts.iter().map(|s| s.to_string()).collect()
