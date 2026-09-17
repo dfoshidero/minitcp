@@ -1,5 +1,7 @@
 // src/proto/ethernet.rs
 
+use super::error::ParseError;
+
 // Address on this cable only. IPv4 (10.0.0.2) is a different address, inside the payload.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MacAddress(pub [u8; 6]);
@@ -24,6 +26,7 @@ pub enum EthernetType {
     Unknown(u16),
 }
 
+#[derive(Debug)]
 pub struct EthernetFrame<'a> {
     pub destination: MacAddress,
     pub source: MacAddress,
@@ -32,20 +35,30 @@ pub struct EthernetFrame<'a> {
 }
 
 impl<'a> EthernetFrame<'a> {
-    pub fn parse(input: &'a [u8]) -> Result<Self, &'static str> {
+    pub fn parse(input: &'a [u8]) -> Result<Self, ParseError> {
         // Ethernet II header is 14 bytes: dst MAC [0..6], src MAC [6..12], EtherType [12..14].
         if input.len() < 14 {
-            return Err("truncated ethernet frame");
+            return Err(ParseError::TruncatedEthernet);
         }
 
+        // These slices have a known length once the check above passed, so the
+        // conversions cannot actually fail.
         let destination = MacAddress(
             input[0..6]
                 .try_into()
-                .map_err(|_| "invalid destination MAC")?,
+                .map_err(|_| ParseError::TruncatedEthernet)?,
         );
-        let source = MacAddress(input[6..12].try_into().map_err(|_| "invalid source MAC")?);
+        let source = MacAddress(
+            input[6..12]
+                .try_into()
+                .map_err(|_| ParseError::TruncatedEthernet)?,
+        );
         // Same "high byte first" order ARP and IPv4 use. to_be_bytes below writes it back that way.
-        let raw = u16::from_be_bytes(input[12..14].try_into().map_err(|_| "invalid EtherType")?);
+        let raw = u16::from_be_bytes(
+            input[12..14]
+                .try_into()
+                .map_err(|_| ParseError::TruncatedEthernet)?,
+        );
         let ethertype = match raw {
             0x0800 => EthernetType::Ipv4,
             0x0806 => EthernetType::Arp,
@@ -110,11 +123,11 @@ mod tests {
     fn parse_rejects_truncated_frame() {
         assert_eq!(
             EthernetFrame::parse(&[0u8; 13]).err(),
-            Some("truncated ethernet frame")
+            Some(ParseError::TruncatedEthernet)
         );
         assert_eq!(
             EthernetFrame::parse(&[]).err(),
-            Some("truncated ethernet frame")
+            Some(ParseError::TruncatedEthernet)
         );
     }
 

@@ -215,7 +215,7 @@ fn render_verbose(when: &str, outcome: &Outcome) {
                         Verb::Drop,
                         dropped.layer,
                         dropped.osi,
-                        &dropped.reason,
+                        &dropped.reason.to_string(),
                     );
                     first = false;
                 }
@@ -226,7 +226,7 @@ fn render_verbose(when: &str, outcome: &Outcome) {
                     dropped.layer,
                     dropped.osi,
                     "",
-                    &dropped.reason,
+                    &dropped.reason.to_string(),
                 ),
                 Scope::Link => emit_line(
                     &mut first,
@@ -235,7 +235,7 @@ fn render_verbose(when: &str, outcome: &Outcome) {
                     dropped.layer,
                     dropped.osi,
                     &endpoints(outcome.link),
-                    &dropped.reason,
+                    &dropped.reason.to_string(),
                 ),
             },
         }
@@ -329,7 +329,7 @@ fn render_quiet(when: &str, outcome: &Outcome) {
                 dropped.layer,
                 dropped.osi,
                 &addr,
-                &dropped.reason,
+                &dropped.reason.to_string(),
             );
         }
     }

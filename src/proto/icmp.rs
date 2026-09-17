@@ -1,18 +1,19 @@
 // src/proto/icmp.rs
 
 use super::checksum::internet_checksum;
+use super::error::ParseError;
 
 /// ICMP Echo Request is type 8 / code 0. Echo Reply is type 0 / code 0.
 /// Checksum covers the entire ICMP message (header + payload) - unlike TCP/UDP which only cover the header.
-pub fn make_echo_reply(request: &[u8]) -> Result<Vec<u8>, &'static str> {
+pub fn make_echo_reply(request: &[u8]) -> Result<Vec<u8>, ParseError> {
     if request.len() < 8 {
-        return Err("truncated ICMP echo");
+        return Err(ParseError::TruncatedIcmpEcho);
     }
     if request[0] != 8 || request[1] != 0 {
-        return Err("not echo request");
+        return Err(ParseError::NotEchoRequest);
     }
     if internet_checksum(request) != 0 {
-        return Err("bad icmp checksum");
+        return Err(ParseError::BadIcmpChecksum);
     }
 
     // Copy so identifier, sequence number, and payload come back unchanged;
@@ -59,7 +60,7 @@ mod tests {
     fn rejects_truncated() {
         assert_eq!(
             make_echo_reply(&[8, 0, 0, 0, 0, 1, 0]).err(),
-            Some("truncated ICMP echo")
+            Some(ParseError::TruncatedIcmpEcho)
         );
     }
 
@@ -72,14 +73,20 @@ mod tests {
         bytes[3] = 0;
         let sum = internet_checksum(&bytes);
         bytes[2..4].copy_from_slice(&sum.to_be_bytes());
-        assert_eq!(make_echo_reply(&bytes).err(), Some("not echo request"));
+        assert_eq!(
+            make_echo_reply(&bytes).err(),
+            Some(ParseError::NotEchoRequest)
+        );
     }
 
     #[test]
     fn rejects_bad_checksum() {
         let mut req = echo_request_with_payload(1, 2, b"payload");
         req[2] ^= 0xff;
-        assert_eq!(make_echo_reply(&req).err(), Some("bad icmp checksum"));
+        assert_eq!(
+            make_echo_reply(&req).err(),
+            Some(ParseError::BadIcmpChecksum)
+        );
     }
 
     #[test]

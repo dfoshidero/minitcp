@@ -3,6 +3,7 @@
 use std::net::Ipv4Addr;
 
 use super::checksum::internet_checksum;
+use super::error::ParseError;
 
 const MINIMUM_IPV4_HEADER_SIZE: usize = 20;
 // Bytes 6-7 hold two facts at once: "are more pieces coming?" and "where does this piece start?"
@@ -48,9 +49,9 @@ pub struct Ipv4Packet<'a> {
 }
 
 impl<'a> Ipv4Packet<'a> {
-    pub fn parse(input: &'a [u8]) -> Result<Self, &'static str> {
+    pub fn parse(input: &'a [u8]) -> Result<Self, ParseError> {
         if input.len() < MINIMUM_IPV4_HEADER_SIZE {
-            return Err("truncated ipv4 header");
+            return Err(ParseError::TruncatedIpv4);
         }
 
         // Version and header length share byte 0 to save space.
@@ -61,26 +62,26 @@ impl<'a> Ipv4Packet<'a> {
         let ihl_bytes = ((input[0] & 0x0F) as usize) * 4;
 
         if version != 4 || ihl_bytes < MINIMUM_IPV4_HEADER_SIZE || input.len() < ihl_bytes {
-            return Err("invalid ipv4 header");
+            return Err(ParseError::InvalidIpv4Header);
         }
 
         // How long the IP letter is. Ethernet may pad the frame, so input.len() can be bigger.
         let total_length = u16::from_be_bytes([input[2], input[3]]) as usize;
         if total_length < ihl_bytes || total_length > input.len() {
-            return Err("invalid ipv4 total length");
+            return Err(ParseError::InvalidIpv4TotalLength);
         }
 
         let frag = u16::from_be_bytes([input[6], input[7]]);
         // AND peels one fact out of the packed field (see MORE_FRAGMENTS / FRAGMENT_OFFSET).
         // Either one set means a torn packet; v1 drops it rather than reassembling.
         if (frag & FRAGMENT_OFFSET) != 0 || (frag & MORE_FRAGMENTS) != 0 {
-            return Err("ipv4 fragmentation unsupported");
+            return Err(ParseError::Ipv4FragmentUnsupported);
         }
 
         // checksum.rs: including the checksum field, a correct header sums to 0.
         // write() zeros that field, computes, then fills it so this check can pass.
         if internet_checksum(&input[..ihl_bytes]) != 0 {
-            return Err("bad ipv4 checksum");
+            return Err(ParseError::BadIpv4Checksum);
         }
 
         Ok(Self {
@@ -137,7 +138,7 @@ mod tests {
     fn parse_rejects_truncated() {
         assert_eq!(
             Ipv4Packet::parse(&[0u8; 19]).err(),
-            Some("truncated ipv4 header")
+            Some(ParseError::TruncatedIpv4)
         );
     }
 
@@ -147,14 +148,14 @@ mod tests {
         bad_ver[0] = 0x65; // version 6, IHL 5
         assert_eq!(
             Ipv4Packet::parse(&bad_ver).err(),
-            Some("invalid ipv4 header")
+            Some(ParseError::InvalidIpv4Header)
         );
 
         let mut bad_ihl = PING;
         bad_ihl[0] = 0x44; // version 4, IHL 4 → 16 bytes
         assert_eq!(
             Ipv4Packet::parse(&bad_ihl).err(),
-            Some("invalid ipv4 header")
+            Some(ParseError::InvalidIpv4Header)
         );
     }
 
@@ -165,14 +166,14 @@ mod tests {
         too_small[2..4].copy_from_slice(&19u16.to_be_bytes());
         assert_eq!(
             Ipv4Packet::parse(&too_small).err(),
-            Some("invalid ipv4 total length")
+            Some(ParseError::InvalidIpv4TotalLength)
         );
         // claims to be longer than the buffer we actually have
         let mut too_big = PING;
         too_big[2..4].copy_from_slice(&100u16.to_be_bytes());
         assert_eq!(
             Ipv4Packet::parse(&too_big).err(),
-            Some("invalid ipv4 total length")
+            Some(ParseError::InvalidIpv4TotalLength)
         );
     }
 
@@ -180,7 +181,10 @@ mod tests {
     fn parse_rejects_bad_checksum() {
         let mut bad = PING;
         bad[10] ^= 0xff;
-        assert_eq!(Ipv4Packet::parse(&bad).err(), Some("bad ipv4 checksum"));
+        assert_eq!(
+            Ipv4Packet::parse(&bad).err(),
+            Some(ParseError::BadIpv4Checksum)
+        );
     }
 
     #[test]
@@ -192,7 +196,7 @@ mod tests {
         mf[10..12].copy_from_slice(&csum.to_be_bytes());
         assert_eq!(
             Ipv4Packet::parse(&mf).err(),
-            Some("ipv4 fragmentation unsupported")
+            Some(ParseError::Ipv4FragmentUnsupported)
         );
         let mut offset = PING;
         offset[6..8].copy_from_slice(&0x0001u16.to_be_bytes());
@@ -201,7 +205,7 @@ mod tests {
         offset[10..12].copy_from_slice(&csum.to_be_bytes());
         assert_eq!(
             Ipv4Packet::parse(&offset).err(),
-            Some("ipv4 fragmentation unsupported")
+            Some(ParseError::Ipv4FragmentUnsupported)
         );
     }
     #[test]

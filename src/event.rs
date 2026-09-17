@@ -7,6 +7,7 @@
 
 use std::net::Ipv4Addr;
 
+use crate::proto::error::ParseError;
 use crate::proto::ethernet::MacAddress;
 use crate::proto::ipv4::Protocol;
 
@@ -119,7 +120,7 @@ impl ArpOperation {
 }
 
 /// A frame the stack refused, and how far it got first.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Dropped {
     /// Protocol name, e.g. `"ipv4"`.
     pub layer: &'static str,
@@ -127,7 +128,46 @@ pub struct Dropped {
     pub osi: &'static str,
     /// Which endpoints describe this drop.
     pub scope: Scope,
-    pub reason: String,
+    pub reason: DropReason,
+}
+
+/// Why a frame was discarded. Match on this rather than on the message text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DropReason {
+    /// A parser refused the bytes.
+    Malformed(ParseError),
+    /// Addressed to a host that is not us.
+    NotForUs,
+    /// Discarded on purpose, because the configuration asked for it.
+    Filtered,
+    /// Discarded by the random-loss simulator.
+    RandomLoss,
+    /// An ARP payload too short to answer.
+    TruncatedArp,
+    /// A transport this stack does not speak yet.
+    NotImplemented,
+    /// An IPv4 protocol number with no handler.
+    UnknownProtocol(u8),
+}
+
+impl std::fmt::Display for DropReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Malformed(e) => write!(f, "{e}"),
+            Self::NotForUs => f.write_str("not for us"),
+            Self::Filtered => f.write_str("dropped"),
+            Self::RandomLoss => f.write_str("random drop"),
+            Self::TruncatedArp => f.write_str("truncated ARP payload"),
+            Self::NotImplemented => f.write_str("not implemented"),
+            Self::UnknownProtocol(n) => write!(f, "unknown protocol {n}"),
+        }
+    }
+}
+
+impl From<ParseError> for DropReason {
+    fn from(error: ParseError) -> Self {
+        Self::Malformed(error)
+    }
 }
 
 /// How deep the stack was when it gave up, which decides whose addresses

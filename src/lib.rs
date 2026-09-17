@@ -28,7 +28,19 @@
 //!     0x08, 0x06, // EtherType: ARP
 //! ])?;
 //! assert_eq!(frame.ethertype, EthernetType::Arp);
-//! # Ok::<(), &'static str>(())
+//! # Ok::<(), minitcp::proto::ParseError>(())
+//! ```
+//!
+//! Rejections are typed, so a caller can tell a truncated frame from a bad
+//! checksum without matching on prose:
+//!
+//! ```
+//! use minitcp::proto::{ParseError, ethernet::EthernetFrame};
+//!
+//! assert_eq!(
+//!     EthernetFrame::parse(&[0u8; 13]).unwrap_err(),
+//!     ParseError::TruncatedEthernet
+//! );
 //! ```
 //!
 //! Driving the stack is the same shape: hand it a frame, read back what it made
