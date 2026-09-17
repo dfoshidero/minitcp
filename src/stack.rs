@@ -62,8 +62,20 @@ fn arp_addrs(payload: &[u8]) -> Option<(Ipv4Addr, Ipv4Addr)> {
     ))
 }
 
-fn ip_pair(src: Ipv4Addr, dst: Ipv4Addr) -> String {
+/// "source -> destination", for either MACs (L2) or IPv4 addresses (L3).
+fn pair(src: impl std::fmt::Display, dst: impl std::fmt::Display) -> String {
     format!("{src} -> {dst}")
+}
+
+/// Drop of something carried *inside* IPv4 (ICMP/UDP/TCP).
+/// Verbose already printed the addresses on the parent ipv4 line, so the child
+/// line carries only the reason. Quiet has no parent line, so it repeats them.
+fn drop_in_ipv4(when: &str, verbose: bool, layer: &str, osi: &str, addrs: &str, reason: &str) {
+    if verbose {
+        log::emit_inside(when, Verb::Drop, layer, osi, reason);
+    } else {
+        log::emit_at(when, Verb::Drop, layer, osi, addrs, reason);
+    }
 }
 
 pub struct SeededRng {
@@ -256,7 +268,7 @@ fn handle_frame(cfg: &Config, bytes: &[u8], rng: &mut SeededRng) -> Option<Vec<u
         }
     };
 
-    let macs = format!("{} -> {}", frame.source, frame.destination);
+    let macs = pair(frame.source, frame.destination);
 
     if drop_pct_hit(cfg.drop_pct, rng) {
         log::emit_at(&when, Verb::Drop, "ethernet", "L2", &macs, "random drop");
@@ -277,7 +289,7 @@ fn handle_frame(cfg: &Config, bytes: &[u8], rng: &mut SeededRng) -> Option<Vec<u
                 if verbose {
                     log::emit_at(&when, Verb::In, "ethernet", "L2", &macs, "ethertype 0x0806");
                     let arp_addrs = arp_addrs(frame.payload)
-                        .map(|(spa, tpa)| ip_pair(spa, tpa))
+                        .map(|(spa, tpa)| pair(spa, tpa))
                         .unwrap_or_default();
                     log::emit_cont(&when, Verb::More, "arp", "L2", &arp_addrs, "who-has");
                 }
@@ -306,20 +318,13 @@ fn handle_frame(cfg: &Config, bytes: &[u8], rng: &mut SeededRng) -> Option<Vec<u
 
             if verbose {
                 log::emit_at(&when, Verb::In, "ethernet", "L2", &macs, "ethertype 0x0806");
-                log::emit_cont(
-                    &when,
-                    Verb::More,
-                    "arp",
-                    "L2",
-                    &ip_pair(spa, tpa),
-                    "who-has",
-                );
+                log::emit_cont(&when, Verb::More, "arp", "L2", &pair(spa, tpa), "who-has");
                 log::emit_cont(
                     &when,
                     Verb::Out,
                     "ethernet",
                     "L2",
-                    &format!("{} -> {}", our_mac, frame.source),
+                    &pair(our_mac, frame.source),
                     "ethertype 0x0806",
                 );
                 log::emit_cont(
@@ -327,17 +332,17 @@ fn handle_frame(cfg: &Config, bytes: &[u8], rng: &mut SeededRng) -> Option<Vec<u
                     Verb::More,
                     "arp",
                     "L2",
-                    &ip_pair(Ipv4Addr::from(our_ip), spa),
+                    &pair(Ipv4Addr::from(our_ip), spa),
                     &format!("is-at {our_mac}"),
                 );
             } else {
-                log::emit_quiet(&when, "arp", &ip_pair(spa, tpa), "who-has");
+                log::emit_quiet(&when, "arp", &pair(spa, tpa), "who-has");
             }
             return Some(ethernet_reply);
         }
         EthernetType::Ipv4 => match Ipv4Packet::parse(frame.payload) {
             Ok(packet) => {
-                let ip_addrs = ip_pair(packet.source, packet.destination);
+                let ip_addrs = pair(packet.source, packet.destination);
                 if verbose {
                     log::emit_at(&when, Verb::In, "ethernet", "L2", &macs, "ethertype 0x0800");
                     log::emit_cont(
@@ -358,26 +363,11 @@ fn handle_frame(cfg: &Config, bytes: &[u8], rng: &mut SeededRng) -> Option<Vec<u
                 match packet.protocol {
                     Protocol::Icmp => {
                         if packet.destination.octets() != our_ip {
-                            if verbose {
-                                log::emit_inside(&when, Verb::Drop, "icmp", "L3", "not for us");
-                            } else {
-                                log::emit_at(
-                                    &when,
-                                    Verb::Drop,
-                                    "icmp",
-                                    "L3",
-                                    &ip_addrs,
-                                    "not for us",
-                                );
-                            }
+                            drop_in_ipv4(&when, verbose, "icmp", "L3", &ip_addrs, "not for us");
                             return None;
                         }
                         if cfg.drop.contains(&DropKind::Icmp) {
-                            if verbose {
-                                log::emit_inside(&when, Verb::Drop, "icmp", "L3", "dropped");
-                            } else {
-                                log::emit_at(&when, Verb::Drop, "icmp", "L3", &ip_addrs, "dropped");
-                            }
+                            drop_in_ipv4(&when, verbose, "icmp", "L3", &ip_addrs, "dropped");
                             return None;
                         }
                         if verbose {
@@ -418,7 +408,7 @@ fn handle_frame(cfg: &Config, bytes: &[u8], rng: &mut SeededRng) -> Option<Vec<u
                                         Verb::Out,
                                         "ethernet",
                                         "L2",
-                                        &format!("{} -> {}", our_mac, frame.source),
+                                        &pair(our_mac, frame.source),
                                         "ethertype 0x0800",
                                     );
                                     log::emit_cont(
@@ -426,7 +416,7 @@ fn handle_frame(cfg: &Config, bytes: &[u8], rng: &mut SeededRng) -> Option<Vec<u
                                         Verb::More,
                                         "ipv4",
                                         "L3",
-                                        &ip_pair(Ipv4Addr::from(our_ip), packet.source),
+                                        &pair(Ipv4Addr::from(our_ip), packet.source),
                                         &format!(
                                             "ttl={} proto=icmp payload={}",
                                             cfg.ttl,
@@ -451,41 +441,14 @@ fn handle_frame(cfg: &Config, bytes: &[u8], rng: &mut SeededRng) -> Option<Vec<u
                                 return Some(ethernet_reply);
                             }
                             Err(e) => {
-                                if verbose {
-                                    log::emit_inside(&when, Verb::Drop, "icmp", "L3", e);
-                                } else {
-                                    log::emit_at(&when, Verb::Drop, "icmp", "L3", &ip_addrs, e);
-                                }
+                                drop_in_ipv4(&when, verbose, "icmp", "L3", &ip_addrs, e);
                             }
                         }
                     }
-                    Protocol::Udp => {
-                        if verbose {
-                            log::emit_inside(&when, Verb::Drop, "udp", "L4", "not implemented");
-                        } else {
-                            log::emit_at(
-                                &when,
-                                Verb::Drop,
-                                "udp",
-                                "L4",
-                                &ip_addrs,
-                                "not implemented",
-                            );
-                        }
-                    }
-                    Protocol::Tcp => {
-                        if verbose {
-                            log::emit_inside(&when, Verb::Drop, "tcp", "L4", "not implemented");
-                        } else {
-                            log::emit_at(
-                                &when,
-                                Verb::Drop,
-                                "tcp",
-                                "L4",
-                                &ip_addrs,
-                                "not implemented",
-                            );
-                        }
+                    // Milestones 7-14 replace these with real handlers.
+                    Protocol::Udp | Protocol::Tcp => {
+                        let name = protocol_name(packet.protocol);
+                        drop_in_ipv4(&when, verbose, &name, "L4", &ip_addrs, "not implemented");
                     }
                     Protocol::Unknown(n) => {
                         let reason = format!("unknown protocol {n}");
@@ -525,11 +488,9 @@ fn handle_frame(cfg: &Config, bytes: &[u8], rng: &mut SeededRng) -> Option<Vec<u
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::{Config, DropKind};
-    use crate::interface::pcap::{PcapReader, PcapWriter, pcap_info};
+    use crate::interface::pcap::pcap_info;
     use crate::proto::checksum::internet_checksum;
     use crate::proto::ethernet::MacAddress;
-    use crate::proto::icmp::make_echo_reply;
     use std::cell::RefCell;
     use std::collections::VecDeque;
     use std::fs;

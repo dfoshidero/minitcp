@@ -58,6 +58,14 @@ impl DropKind {
             )),
         }
     }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Arp => "arp",
+            Self::Icmp => "icmp",
+            Self::Ip => "ip",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -131,20 +139,18 @@ impl Config {
 
     /// Flags the TUI child `minitcp stack` process should inherit.
     pub fn child_stack_args(&self, verbose: bool) -> Vec<String> {
+        fn flag(args: &mut Vec<String>, name: &str, value: String) {
+            args.extend([name.to_string(), value]);
+        }
+
         let mut args = vec!["stack".into()];
-        args.push("--iface".into());
-        args.push(self.iface.clone());
-        args.push("--addr".into());
-        args.push(self.addr.to_string());
-        args.push("--mac".into());
-        args.push(self.mac.to_string());
-        args.push("--linux-addr".into());
-        args.push(self.linux_addr.to_string());
-        args.push("--tun".into());
-        args.push(self.tun.display().to_string());
+        flag(&mut args, "--iface", self.iface.clone());
+        flag(&mut args, "--addr", self.addr.to_string());
+        flag(&mut args, "--mac", self.mac.to_string());
+        flag(&mut args, "--linux-addr", self.linux_addr.to_string());
+        flag(&mut args, "--tun", self.tun.display().to_string());
         if let Some(path) = &self.write {
-            args.push("--write".into());
-            args.push(path.display().to_string());
+            flag(&mut args, "--write", path.display().to_string());
         }
         if self.hex {
             args.push("--hex".into());
@@ -153,36 +159,21 @@ impl Config {
             args.push("--quiet".into());
         }
         if let Some(n) = self.count {
-            args.push("--count".into());
-            args.push(n.to_string());
+            flag(&mut args, "--count", n.to_string());
         }
         if !self.drop.is_empty() {
-            args.push("--drop".into());
-            args.push(
-                self.drop
-                    .iter()
-                    .map(|k| match k {
-                        DropKind::Arp => "arp",
-                        DropKind::Icmp => "icmp",
-                        DropKind::Ip => "ip",
-                    })
-                    .collect::<Vec<_>>()
-                    .join(","),
-            );
+            let kinds: Vec<_> = self.drop.iter().map(|k| k.name()).collect();
+            flag(&mut args, "--drop", kinds.join(","));
         }
         if self.drop_pct > 0 {
-            args.push("--drop-pct".into());
-            args.push(self.drop_pct.to_string());
+            flag(&mut args, "--drop-pct", self.drop_pct.to_string());
         }
-        args.push("--ttl".into());
-        args.push(self.ttl.to_string());
+        flag(&mut args, "--ttl", self.ttl.to_string());
         if let Some(id) = self.icmp_id {
-            args.push("--id".into());
-            args.push(id.to_string());
+            flag(&mut args, "--id", id.to_string());
         }
         if let Some(fwd) = &self.fwd {
-            args.push("--fwd".into());
-            args.push(fwd.clone());
+            flag(&mut args, "--fwd", fwd.clone());
         }
         args
     }

@@ -15,15 +15,16 @@ pub fn make_echo_reply(request: &[u8]) -> Result<Vec<u8>, &'static str> {
         return Err("bad icmp checksum");
     }
 
-    let mut reply = request.to_vec(); // copy the request to a new vector
-    // we are copying the request to a new vector because we need to modify the header``
+    // Copy so identifier, sequence number, and payload come back unchanged;
+    // only the type and the checksum differ between request and reply.
+    let mut reply = request.to_vec();
     reply[0] = 0; // Echo Reply
-    reply[2] = 0; // checksum must be recalculated from scratch
+    reply[2] = 0; // zero the checksum field before recomputing over it
     reply[3] = 0;
 
-    let sum = internet_checksum(&reply); // recalculate the checksum
-    reply[2..4].copy_from_slice(&sum.to_be_bytes()); // store the checksum in the header
-    Ok(reply) // return the reply
+    let sum = internet_checksum(&reply);
+    reply[2..4].copy_from_slice(&sum.to_be_bytes());
+    Ok(reply)
 }
 
 pub fn set_echo_id(message: &mut [u8], id: u16) {

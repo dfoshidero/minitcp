@@ -108,12 +108,6 @@ impl From<String> for ParseError {
     }
 }
 
-impl From<&str> for ParseError {
-    fn from(message: &str) -> Self {
-        Self::msg(message)
-    }
-}
-
 pub(crate) fn flag_usage(flag: &str) -> &'static str {
     match flag {
         "--iface" => "usage: --iface NAME            which TAP (default: tap0)",
@@ -129,9 +123,6 @@ pub(crate) fn flag_usage(flag: &str) -> &'static str {
         "--listen" => {
             "usage: --listen ADDR           bridge listen address (default: 0.0.0.0:7946)"
         }
-        "tap" => USAGE_TAP,
-        "identity" => USAGE_IDENTITY,
-        "pcap" | "pcap-info" => USAGE_PCAP,
         "--write" => "usage: --write FILE            also save frames to a pcap",
         "--config" => USAGE_CONFIG,
         "--drop" => "usage: --drop arp|icmp|ip      ignore that kind of frame (comma-ok: arp,icmp)",
@@ -143,7 +134,6 @@ pub(crate) fn flag_usage(flag: &str) -> &'static str {
             "usage: --id N                  ICMP echo id on replies (default: copy from request)"
         }
         "-c" | "--count" => "usage: -c, --count N           stop after N frames (stack/replay)",
-        "replay" => USAGE_REPLAY,
         _ => TRY_HELP,
     }
 }
