@@ -1313,7 +1313,7 @@ fn ui_loop(terminal: &mut DefaultTerminal, lab: &mut Lab) -> std::io::Result<()>
     Ok(())
 }
 
-pub fn run_lab(cfg: Config) -> std::io::Result<()> {
+pub(crate) fn run_lab(cfg: Config) -> std::io::Result<()> {
     if !std::io::stdout().is_terminal() {
         return Err(std::io::Error::other(
             "run needs a terminal; use `minitcp stack` for piped output",

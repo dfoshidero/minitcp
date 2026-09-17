@@ -78,16 +78,16 @@ fn drop_in_ipv4(when: &str, verbose: bool, layer: &str, osi: &str, addrs: &str, 
     }
 }
 
-pub struct SeededRng {
+struct SeededRng {
     state: u64,
 }
 
 impl SeededRng {
-    pub fn new(seed: u64) -> Self {
+    fn new(seed: u64) -> Self {
         Self { state: seed | 1 }
     }
 
-    pub fn from_entropy() -> Self {
+    fn from_entropy() -> Self {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
@@ -95,7 +95,7 @@ impl SeededRng {
         Self::new(nanos)
     }
 
-    pub fn next_u32(&mut self) -> u32 {
+    fn next_u32(&mut self) -> u32 {
         let mut x = self.state;
         x ^= x << 13;
         x ^= x >> 7;
@@ -105,7 +105,7 @@ impl SeededRng {
     }
 }
 
-pub fn drop_pct_hit(pct: u8, rng: &mut SeededRng) -> bool {
+fn drop_pct_hit(pct: u8, rng: &mut SeededRng) -> bool {
     if pct == 0 {
         return false;
     }
@@ -162,13 +162,13 @@ fn retryable_tap_attach(error: &io::Error) -> bool {
     ) || matches!(error.raw_os_error(), Some(libc::ENODEV) | Some(libc::EBUSY))
 }
 
-pub fn run_bridge(cfg: Config) -> std::io::Result<()> {
+pub(crate) fn run_bridge(cfg: Config) -> std::io::Result<()> {
     crate::tapcmd::ensure_iface(&cfg.iface, cfg.linux_addr)?;
     let tap = open_tap(&cfg)?;
     crate::fwd::run_bridge(&cfg.listen, tap)
 }
 
-pub fn run_stack(cfg: Config) -> std::io::Result<()> {
+pub(crate) fn run_stack(cfg: Config) -> std::io::Result<()> {
     if let Command::Replay(path) = &cfg.command {
         let reader = PcapReader::open(path)?;
         return run_io(cfg, reader, EofBehavior::Success);

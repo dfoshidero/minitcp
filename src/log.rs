@@ -13,7 +13,7 @@ use crossterm::style::Stylize;
 static OUTPUT_ERROR: Mutex<Option<io::Error>> = Mutex::new(None);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Verb {
+pub(crate) enum Verb {
     In,
     Out,
     Drop,
@@ -21,7 +21,7 @@ pub enum Verb {
 }
 
 impl Verb {
-    pub fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::In => "IN",
             Self::Out => "OUT",
@@ -31,17 +31,17 @@ impl Verb {
     }
 }
 
-pub struct Event<'a> {
-    pub show_time: bool,
-    pub verb: Verb,
-    pub layer: &'a str,
-    pub osi: &'a str,
-    pub address: &'a str,
-    pub reason: &'a str,
+struct Event<'a> {
+    show_time: bool,
+    verb: Verb,
+    layer: &'a str,
+    osi: &'a str,
+    address: &'a str,
+    reason: &'a str,
 }
 
 impl<'a> Event<'a> {
-    pub fn format_with(&self, when: &str) -> String {
+    fn format_with(&self, when: &str) -> String {
         let when_col = if self.show_time {
             when.to_string()
         } else {
@@ -61,13 +61,13 @@ impl<'a> Event<'a> {
         )
     }
 
-    pub fn emit_at(&self, when: &str) {
+    fn emit_at(&self, when: &str) {
         emit_protocol_line(&self.format_with(when));
     }
 }
 
 /// Wall-clock "HH:MM:SS" stamp that opens each protocol line.
-pub fn now() -> String {
+pub(crate) fn now() -> String {
     let mut ts = libc::timespec {
         tv_sec: 0,
         tv_nsec: 0,
@@ -81,15 +81,15 @@ pub fn now() -> String {
 }
 
 /// One-line quiet summary: time, layer, addresses, reason. No IN/OUT.
-pub fn format_quiet(when: &str, layer: &str, address: &str, reason: &str) -> String {
+fn format_quiet(when: &str, layer: &str, address: &str, reason: &str) -> String {
     format!("{when}  {layer}  {address}  {reason}")
 }
 
-pub fn emit_quiet(when: &str, layer: &str, address: &str, reason: &str) {
+pub(crate) fn emit_quiet(when: &str, layer: &str, address: &str, reason: &str) {
     emit_protocol_line(&format_quiet(when, layer, address, reason));
 }
 
-pub fn emit_at(when: &str, verb: Verb, layer: &str, osi: &str, address: &str, reason: &str) {
+pub(crate) fn emit_at(when: &str, verb: Verb, layer: &str, osi: &str, address: &str, reason: &str) {
     Event {
         show_time: true,
         verb,
@@ -101,7 +101,14 @@ pub fn emit_at(when: &str, verb: Verb, layer: &str, osi: &str, address: &str, re
     .emit_at(when);
 }
 
-pub fn emit_cont(when: &str, verb: Verb, layer: &str, osi: &str, address: &str, reason: &str) {
+pub(crate) fn emit_cont(
+    when: &str,
+    verb: Verb,
+    layer: &str,
+    osi: &str,
+    address: &str,
+    reason: &str,
+) {
     Event {
         show_time: false,
         verb,
@@ -114,7 +121,7 @@ pub fn emit_cont(when: &str, verb: Verb, layer: &str, osi: &str, address: &str, 
 }
 
 /// Protocol carried inside IPv4 (ICMP, UDP, TCP). Tree-child of the ipv4 line.
-pub fn emit_inside(when: &str, verb: Verb, layer: &str, osi: &str, reason: &str) {
+pub(crate) fn emit_inside(when: &str, verb: Verb, layer: &str, osi: &str, reason: &str) {
     let layer = format!("└── {layer}");
     Event {
         show_time: false,
@@ -143,25 +150,25 @@ fn emit_protocol_line(line: &str) {
     }
 }
 
-pub fn take_output_error() -> Option<io::Error> {
+pub(crate) fn take_output_error() -> Option<io::Error> {
     OUTPUT_ERROR.lock().ok()?.take()
 }
 
-pub fn write_stdout(text: &str) -> io::Result<()> {
+pub(crate) fn write_stdout(text: &str) -> io::Result<()> {
     let stdout = io::stdout();
     let mut stdout = stdout.lock();
     stdout.write_all(text.as_bytes())?;
     stdout.flush()
 }
 
-pub fn write_stderr(text: &str) -> io::Result<()> {
+pub(crate) fn write_stderr(text: &str) -> io::Result<()> {
     let stderr = io::stderr();
     let mut stderr = stderr.lock();
     stderr.write_all(text.as_bytes())?;
     stderr.flush()
 }
 
-pub mod status {
+pub(crate) mod status {
     use super::*;
 
     #[derive(Clone, Copy)]
@@ -197,19 +204,19 @@ pub mod status {
         let _ = write_line(&mut stderr.lock(), &rendered);
     }
 
-    pub fn info(message: impl AsRef<str>) {
+    pub(crate) fn info(message: impl AsRef<str>) {
         emit(Level::Info, message.as_ref());
     }
 
-    pub fn ok(message: impl AsRef<str>) {
+    pub(crate) fn ok(message: impl AsRef<str>) {
         emit(Level::Ok, message.as_ref());
     }
 
-    pub fn warn(message: impl AsRef<str>) {
+    pub(crate) fn warn(message: impl AsRef<str>) {
         emit(Level::Warn, message.as_ref());
     }
 
-    pub fn error(message: impl AsRef<str>) {
+    pub(crate) fn error(message: impl AsRef<str>) {
         emit(Level::Error, message.as_ref());
     }
 

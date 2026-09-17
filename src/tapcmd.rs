@@ -23,7 +23,7 @@ enum DockerState {
     Unavailable(String),
 }
 
-pub fn tap_up(cfg: &Config) -> io::Result<()> {
+pub(crate) fn tap_up(cfg: &Config) -> io::Result<()> {
     match docker_state()? {
         DockerState::Ready => return docker_up(cfg),
         DockerState::Unavailable(detail) if !cfg!(target_os = "linux") => {
@@ -47,7 +47,7 @@ pub fn tap_up(cfg: &Config) -> io::Result<()> {
     ))
 }
 
-pub fn tap_down(cfg: &Config) -> io::Result<()> {
+pub(crate) fn tap_down(cfg: &Config) -> io::Result<()> {
     let docker = docker_state()?;
     if matches!(&docker, DockerState::Ready) {
         let output = process::output_timeout("docker", &["rm", "-f", CONTAINER], COMMAND_TIMEOUT)?;
@@ -277,7 +277,7 @@ fn local_linux_up(cfg: &Config) -> io::Result<()> {
 }
 
 /// Create the TAP and give Linux an address (sidecar / local Linux).
-pub fn ensure_iface(name: &str, linux_addr: std::net::Ipv4Addr) -> io::Result<()> {
+pub(crate) fn ensure_iface(name: &str, linux_addr: std::net::Ipv4Addr) -> io::Result<()> {
     #[cfg(not(target_os = "linux"))]
     {
         let _ = (name, linux_addr);
