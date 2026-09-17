@@ -79,6 +79,40 @@ impl Pane {
     }
 }
 
+/// Which machine actually runs tcpdump for the capture pane.
+///
+/// With a local TAP the interface is on this host. With the sidecar, `tap0`
+/// lives in the container's network namespace, and sniffing here would show
+/// the published port rather than the TAP.
+///
+/// Getting this wrong is not a difference in formatting — it is the difference
+/// between seeing traffic and seeing nothing at all.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CaptureHost {
+    Local,
+    Sidecar,
+}
+
+/// How to stop a child we started.
+///
+/// Not every child can be stopped the same way, because not every child is ours
+/// to signal.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Stop {
+    /// An ordinary child running as us. We signal its whole process group, so
+    /// any helpers it spawned go too.
+    Group,
+    /// A root-owned tcpdump on this host. We cannot signal it as ourselves, so
+    /// we ask sudo to, naming the exact PID tcpdump reported (matching by name
+    /// could hit somebody else's capture).
+    HostRoot,
+    /// A tcpdump inside the sidecar. Its PID is a number in the *container's*
+    /// PID namespace and means nothing here — signalling it on the host could
+    /// hit an unrelated process — so the signal is sent from inside the
+    /// container too.
+    InContainer,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DumpFilter {
     All,
@@ -112,8 +146,12 @@ impl DumpFilter {
         }
     }
 
-    fn title(self, iface: &str) -> String {
-        format!("tcpdump -eni {iface} -l{}", self.filter_arg())
+    fn title(self, iface: &str, host: CaptureHost) -> String {
+        let prefix = match host {
+            CaptureHost::Local => "",
+            CaptureHost::Sidecar => "docker exec minitcp-tap ",
+        };
+        format!("{prefix}tcpdump -eni {iface} -l{}", self.filter_arg())
     }
 }
 
@@ -223,7 +261,7 @@ impl Buffer {
 
 struct ChildProc {
     child: Option<Child>,
-    privileged: bool,
+    stop: Stop,
     command_pid: Option<i32>,
     exit_status: Option<std::process::ExitStatus>,
     exit_error: Option<String>,
@@ -234,7 +272,7 @@ impl ChildProc {
     fn none() -> Self {
         Self {
             child: None,
-            privileged: true,
+            stop: Stop::Group,
             command_pid: None,
             exit_status: None,
             exit_error: None,
@@ -243,7 +281,7 @@ impl ChildProc {
 
     /// Every child is spawned the same way: no stdin, both streams piped into a
     /// pane, and its own process group so it dies with the UI.
-    fn spawn_piped(cmd: &mut Command, privileged: bool) -> std::io::Result<Self> {
+    fn spawn_piped(cmd: &mut Command, stop: Stop) -> std::io::Result<Self> {
         cmd.stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -254,7 +292,7 @@ impl ChildProc {
         let command_pid = Some(child.id() as i32);
         Ok(Self {
             child: Some(child),
-            privileged,
+            stop,
             command_pid,
             exit_status: None,
             exit_error: None,
@@ -263,18 +301,44 @@ impl ChildProc {
 
     fn spawn_stack(cfg: &Config, verbose: bool) -> std::io::Result<Self> {
         let exe = std::env::current_exe()?;
-        Self::spawn_piped(Command::new(exe).args(cfg.child_stack_args(verbose)), false)
+        Self::spawn_piped(
+            Command::new(exe).args(cfg.child_stack_args(verbose)),
+            Stop::Group,
+        )
     }
 
-    fn spawn_dump(filter: DumpFilter, iface: &str) -> std::io::Result<Self> {
-        // sudo may put tcpdump behind a monitor process. Have the shell report
-        // the exact command PID before exec replaces it with tcpdump.
+    /// Start tcpdump wherever the interface actually is.
+    ///
+    /// Either wrapper puts something between us and tcpdump — sudo may add a
+    /// monitor process, and `docker exec` runs it in another PID namespace —
+    /// so the process we spawn is *not* the one we will later need to signal.
+    /// The shell prints its own PID before `exec` replaces it with tcpdump,
+    /// which gives us the real one.
+    fn spawn_dump(filter: DumpFilter, iface: &str, host: CaptureHost) -> std::io::Result<Self> {
         let script = format!(
             "echo __MINITCP_DUMP_PID=$$; exec tcpdump -eni {iface} -l{}",
             filter.filter_arg()
         );
-        let mut proc =
-            Self::spawn_piped(Command::new("sudo").args(["-n", "sh", "-c", &script]), true)?;
+        let (program, args, stop) = match host {
+            CaptureHost::Local => (
+                "sudo",
+                vec!["-n".to_string(), "sh".into(), "-c".into(), script],
+                Stop::HostRoot,
+            ),
+            CaptureHost::Sidecar => (
+                "docker",
+                vec![
+                    "exec".to_string(),
+                    CONTAINER.into(),
+                    "sh".into(),
+                    "-c".into(),
+                    script,
+                ],
+                Stop::InContainer,
+            ),
+        };
+        let mut proc = Self::spawn_piped(Command::new(program).args(&args), stop)
+            .map_err(|error| explain_dump_failure(host, error))?;
         let pid = proc
             .child
             .as_mut()
@@ -283,15 +347,13 @@ impl ChildProc {
         match pid {
             Some(pid) => proc.command_pid = Some(pid),
             None => {
-                // No marker means sudo/tcpdump never got far enough to need the
-                // privileged stop path; just reap the process we spawned.
+                // No marker means the wrapper never got far enough to need the
+                // out-of-process stop path; just reap what we spawned.
                 if let Some(mut child) = proc.child.take() {
                     let _ = child.kill();
                     let _ = child.wait();
                 }
-                return Err(std::io::Error::other(
-                    "tcpdump did not report its process ID",
-                ));
+                return Err(std::io::Error::other(explain_no_pid(host)));
             }
         }
         Ok(proc)
@@ -299,7 +361,7 @@ impl ChildProc {
 
     fn spawn_action(command: &str) -> std::io::Result<Self> {
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".into());
-        Self::spawn_piped(Command::new(shell).args(["-c", command]), false)
+        Self::spawn_piped(Command::new(shell).args(["-c", command]), Stop::Group)
     }
 
     fn take_stdout_stderr(
@@ -353,19 +415,22 @@ impl ChildProc {
 
     fn kill(&mut self) {
         if let Some(pid) = self.pid() {
-            if self.privileged {
-                // tcpdump is root-owned, so stop the exact PID it reported rather
-                // than matching by command name (which could hit another capture).
-                if let Some(command_pid) = self.command_pid {
-                    stop_privileged(command_pid, "TERM");
-                    if !wait_for_exit(command_pid, Duration::from_millis(500)) {
-                        stop_privileged(command_pid, "KILL");
-                        wait_for_exit(command_pid, Duration::from_millis(100));
-                    }
-                }
-            } else {
-                unsafe {
+            match self.stop {
+                Stop::Group => unsafe {
                     libc::kill(-pid, libc::SIGTERM);
+                },
+                // Killing only the wrapper we spawned is not enough: tcpdump
+                // outlives it, and on the next `d` we would be competing with
+                // a capture nobody can see. Stop the exact PID it reported
+                // rather than matching by command name.
+                Stop::HostRoot | Stop::InContainer => {
+                    if let Some(command_pid) = self.command_pid {
+                        signal_elsewhere(self.stop, command_pid, "TERM");
+                        if !wait_for_exit(self.stop, command_pid, Duration::from_millis(500)) {
+                            signal_elsewhere(self.stop, command_pid, "KILL");
+                            wait_for_exit(self.stop, command_pid, Duration::from_millis(200));
+                        }
+                    }
                 }
             }
         }
@@ -393,32 +458,94 @@ fn read_dump_pid(stdout: &mut std::process::ChildStdout) -> Option<i32> {
     marker.strip_prefix(PREFIX)?.trim().parse().ok()
 }
 
-fn stop_privileged(pid: i32, signal: &str) {
-    let signal = format!("-{signal}");
-    let pid = pid.to_string();
-    match crate::process::output_timeout(
-        "sudo",
-        &["-n", "kill", &signal, "--", &pid],
-        Duration::from_secs(3),
-    ) {
-        Ok(output) if output.status.success() => {}
-        Ok(output) => crate::log::status::warn(format!(
-            "could not stop privileged tcpdump process {pid}: {}",
-            crate::process::output_detail(&output)
-        )),
-        Err(error) => crate::log::status::warn(format!(
-            "could not stop privileged tcpdump process {pid}: {error}"
-        )),
+/// Explain why a capture could not even be started.
+///
+/// Both wrappers fail for boring, fixable reasons, and the raw OS error
+/// ("No such file or directory") names neither the cause nor the fix.
+fn explain_dump_failure(host: CaptureHost, error: std::io::Error) -> std::io::Error {
+    if error.kind() != std::io::ErrorKind::NotFound {
+        return error;
+    }
+    let advice = match host {
+        CaptureHost::Local => {
+            "sudo is not installed, so tcpdump cannot be run as root. \
+             Run minitcp as root, or use the TAP sidecar (`minitcp tap up`)."
+        }
+        CaptureHost::Sidecar => {
+            "the TAP is in the sidecar container, but docker is not installed here. \
+             Install Docker, or run minitcp on Linux with a local TAP."
+        }
+    };
+    std::io::Error::new(std::io::ErrorKind::NotFound, advice)
+}
+
+/// The capture started but never announced itself, which almost always means
+/// the wrapper refused before tcpdump ever ran.
+fn explain_no_pid(host: CaptureHost) -> &'static str {
+    match host {
+        CaptureHost::Local => {
+            "tcpdump did not start. sudo probably wanted a password: \
+             run `sudo -v` in another terminal, then press d."
+        }
+        CaptureHost::Sidecar => {
+            "tcpdump did not start in the sidecar. Check the container is running \
+             (`minitcp tap up`), then press d."
+        }
     }
 }
 
-fn wait_for_exit(pid: i32, timeout: Duration) -> bool {
-    let started = Instant::now();
-    let process = format!("/proc/{pid}");
-    while Path::new(&process).exists() && started.elapsed() < timeout {
-        thread::sleep(Duration::from_millis(10));
+/// Send a signal to a process we cannot signal ourselves.
+///
+/// `Stop::HostRoot` borrows root's authority via sudo. `Stop::InContainer`
+/// borrows the container's *PID namespace* via docker exec — the PID is
+/// meaningless outside it, so the signal has to be sent from inside. `kill` is
+/// a shell builtin, so this needs nothing installed in the image.
+fn signal_elsewhere(stop: Stop, pid: i32, signal: &str) {
+    let flag = format!("-{signal}");
+    let pid = pid.to_string();
+    let (program, args): (&str, Vec<&str>) = match stop {
+        Stop::HostRoot => ("sudo", vec!["-n", "kill", &flag, "--", &pid]),
+        Stop::InContainer => ("docker", vec!["exec", CONTAINER, "kill", &flag, &pid]),
+        Stop::Group => return,
+    };
+    match crate::process::output_timeout(program, &args, Duration::from_secs(3)) {
+        Ok(output) if output.status.success() => {}
+        Ok(output) => crate::log::status::warn(format!(
+            "could not stop the tcpdump process {pid}: {}",
+            crate::process::output_detail(&output)
+        )),
+        Err(error) => {
+            crate::log::status::warn(format!("could not stop the tcpdump process {pid}: {error}"))
+        }
     }
-    !Path::new(&process).exists()
+}
+
+fn wait_for_exit(stop: Stop, pid: i32, timeout: Duration) -> bool {
+    let (interval, alive): (Duration, &dyn Fn() -> bool) = match stop {
+        Stop::InContainer => (Duration::from_millis(100), &|| {
+            // `kill -0` sends no signal; it only asks "does this exist, and
+            // may I signal it?". /proc here is the host's, not the container's.
+            let pid = pid.to_string();
+            crate::process::output_timeout(
+                "docker",
+                &["exec", CONTAINER, "kill", "-0", &pid],
+                Duration::from_secs(3),
+            )
+            .is_ok_and(|output| output.status.success())
+        }),
+        _ => (Duration::from_millis(10), &|| {
+            Path::new(&format!("/proc/{pid}")).exists()
+        }),
+    };
+
+    let started = Instant::now();
+    while alive() {
+        if started.elapsed() >= timeout {
+            return false;
+        }
+        thread::sleep(interval);
+    }
+    true
 }
 
 impl Drop for ChildProc {
@@ -427,12 +554,21 @@ impl Drop for ChildProc {
     }
 }
 
-fn spawn_dump_with_retry(filter: DumpFilter, iface: &str) -> std::io::Result<ChildProc> {
-    match ChildProc::spawn_dump(filter, iface) {
+/// Start a capture, and if it fails immediately, try once more.
+///
+/// The retry is for a genuine race at startup: the sidecar's port accepts
+/// connections a moment before `docker exec` will work, and a previous
+/// tcpdump's exit is not always instant.
+fn spawn_dump_with_retry(
+    filter: DumpFilter,
+    iface: &str,
+    host: CaptureHost,
+) -> std::io::Result<ChildProc> {
+    match ChildProc::spawn_dump(filter, iface, host) {
         Ok(child) => Ok(child),
         Err(_) => {
             thread::sleep(Duration::from_millis(200));
-            ChildProc::spawn_dump(filter, iface)
+            ChildProc::spawn_dump(filter, iface, host)
         }
     }
 }
@@ -440,6 +576,9 @@ fn spawn_dump_with_retry(filter: DumpFilter, iface: &str) -> std::io::Result<Chi
 struct Lab {
     focus: Pane,
     filter: DumpFilter,
+    /// Which machine runs tcpdump for the capture pane. Fixed for the life of
+    /// the lab, because the transport it is derived from is too.
+    capture: CaptureHost,
     stack_buf: Buffer,
     dump_buf: Buffer,
     action_buf: Buffer,
@@ -647,23 +786,24 @@ impl Lab {
         attach_child(&mut stack, tx.clone(), Msg::Stack, Msg::StackStatus);
 
         let filter = DumpFilter::All;
-        let mut dump = if remote {
-            let _ = tx.send(Msg::Dump(
-                "TAP lives in the sidecar (`minitcp tap up`). tcpdump is not on this host.".into(),
-            ));
-            ChildProc::none()
+        // The capture has to run where the interface is. With the sidecar that
+        // is inside the container, so tcpdump goes in with it rather than the
+        // pane sitting empty.
+        let capture = if remote {
+            CaptureHost::Sidecar
         } else {
-            match spawn_dump_with_retry(filter, &cfg.iface) {
-                Ok(mut d) => {
-                    attach_child(&mut d, tx.clone(), Msg::Dump, Msg::Dump);
-                    d
-                }
-                Err(e) => {
-                    let _ = tx.send(Msg::Dump(format!(
-                        "minitcp: error: tcpdump not started: {e}"
-                    )));
-                    ChildProc::none()
-                }
+            CaptureHost::Local
+        };
+        let mut dump = match spawn_dump_with_retry(filter, &cfg.iface, capture) {
+            Ok(mut d) => {
+                attach_child(&mut d, tx.clone(), Msg::Dump, Msg::Dump);
+                d
+            }
+            Err(e) => {
+                let _ = tx.send(Msg::Dump(format!(
+                    "minitcp: error: tcpdump not started: {e}"
+                )));
+                ChildProc::none()
             }
         };
 
@@ -680,7 +820,8 @@ impl Lab {
             .push("lab ready. Tab focuses a pane. p ping  n neigh  f flush  d dump filter.".into());
         if remote {
             action_buf.push(
-                "frames via TAP sidecar. ping 10.0.0.2 from Linux that owns tap0 (p uses docker exec)."
+                "frames via TAP sidecar. ping 10.0.0.2 from Linux that owns tap0 \
+                 (p and the capture use docker exec)."
                     .into(),
             );
         }
@@ -694,6 +835,7 @@ impl Lab {
         Ok(Self {
             focus: Pane::Stack,
             filter,
+            capture,
             stack_buf: Buffer::new(),
             dump_buf: Buffer::new(),
             action_buf,
@@ -759,14 +901,14 @@ impl Lab {
             return;
         }
         self.dump.kill();
-        match spawn_dump_with_retry(self.filter, &self.cfg.iface) {
+        match spawn_dump_with_retry(self.filter, &self.cfg.iface, self.capture) {
             Ok(mut c) => {
                 attach_child(&mut c, self.tx.clone(), Msg::Dump, Msg::Dump);
                 self.dump = c;
                 self.dump_alive = true;
                 self.push_pane(
                     Pane::Dump,
-                    format!("— {} —", self.filter.title(&self.cfg.iface)),
+                    format!("— {} —", self.filter.title(&self.cfg.iface, self.capture)),
                 );
             }
             Err(e) => self.push_pane(
@@ -1427,5 +1569,58 @@ mod tests {
         request_shutdown(libc::SIGTERM);
         assert!(SHUTDOWN_REQUESTED.load(Ordering::Relaxed));
         SHUTDOWN_REQUESTED.store(false, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn the_sidecar_capture_says_where_it_is_running() {
+        // The pane title is the command a user could paste themselves, so it
+        // has to name the container when that is where tcpdump really is.
+        let local = DumpFilter::All.title("tap0", CaptureHost::Local);
+        let sidecar = DumpFilter::All.title("tap0", CaptureHost::Sidecar);
+        assert!(!local.contains("docker"), "{local}");
+        assert!(sidecar.starts_with("docker exec"), "{sidecar}");
+        assert!(sidecar.contains("tcpdump -eni tap0"), "{sidecar}");
+    }
+
+    #[test]
+    fn a_filter_reaches_the_command_line_wherever_it_runs() {
+        for host in [CaptureHost::Local, CaptureHost::Sidecar] {
+            assert!(DumpFilter::Arp.title("tap0", host).ends_with(" arp"));
+            assert!(DumpFilter::Ip.title("tap0", host).ends_with(" ip"));
+            assert!(DumpFilter::All.title("tap0", host).ends_with("-l"));
+        }
+    }
+
+    #[test]
+    fn a_container_pid_is_never_signalled_on_the_host() {
+        // A PID from the container's namespace means nothing here, so the
+        // group path must not be reachable for it. `Stop::Group` returning
+        // early is what keeps signal_elsewhere from guessing.
+        signal_elsewhere(Stop::Group, 999_999, "TERM");
+    }
+
+    #[test]
+    fn a_missing_wrapper_is_explained_rather_than_echoed() {
+        let bare = std::io::Error::from(std::io::ErrorKind::NotFound);
+        let local = explain_dump_failure(CaptureHost::Local, bare).to_string();
+        assert!(local.contains("sudo"), "{local}");
+
+        let bare = std::io::Error::from(std::io::ErrorKind::NotFound);
+        let sidecar = explain_dump_failure(CaptureHost::Sidecar, bare).to_string();
+        assert!(sidecar.contains("docker"), "{sidecar}");
+
+        // Anything else is passed through untouched — inventing advice for an
+        // error we did not diagnose would only mislead.
+        let other = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        assert_eq!(
+            explain_dump_failure(CaptureHost::Local, other).kind(),
+            std::io::ErrorKind::PermissionDenied
+        );
+    }
+
+    #[test]
+    fn the_no_pid_advice_names_the_right_thing_to_fix() {
+        assert!(explain_no_pid(CaptureHost::Local).contains("sudo -v"));
+        assert!(explain_no_pid(CaptureHost::Sidecar).contains("tap up"));
     }
 }
