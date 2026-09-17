@@ -269,8 +269,23 @@ fn read_record(file: &mut File, buffer: &mut [u8]) -> io::Result<usize> {
     if file.read(&mut header[..1])? == 0 {
         return Ok(0);
     }
-    file.read_exact(&mut header[1..])?;
+    // Part of a record header arrived, so the rest of it must follow.
+    file.read_exact(&mut header[1..]).map_err(|error| {
+        if error.kind() == io::ErrorKind::UnexpectedEof {
+            return io::Error::new(
+                io::ErrorKind::InvalidData,
+                "pcap ends in the middle of a record header; the file is truncated",
+            );
+        }
+        error
+    })?;
     let incl = u32::from_le_bytes([header[8], header[9], header[10], header[11]]) as usize;
+    if incl == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "pcap record claims a zero-byte frame, which cannot exist on Ethernet",
+        ));
+    }
     if incl > SNAPLEN as usize {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -286,7 +301,15 @@ fn read_record(file: &mut File, buffer: &mut [u8]) -> io::Result<usize> {
             ),
         ));
     }
-    file.read_exact(&mut buffer[..incl])?;
+    file.read_exact(&mut buffer[..incl]).map_err(|error| {
+        if error.kind() == io::ErrorKind::UnexpectedEof {
+            return io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("pcap record claims {incl} bytes but the file ends before them"),
+            );
+        }
+        error
+    })?;
     Ok(incl)
 }
 
@@ -350,8 +373,30 @@ mod tests {
         }
         let mut reader = PcapReader::open(&path).unwrap();
         let error = reader.read_frame(&mut [0u8; 2048]).unwrap_err();
-        assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof);
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("truncated"), "{error}");
         assert!(error.to_string().contains("cannot read pcap"), "{error}");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_zero_length_record_is_corruption_not_the_end_of_the_file() {
+        let path = unique_pcap();
+        {
+            let mut writer = PcapWriter::create(&path).unwrap();
+            writer.write_frame(&ARP_FRAME).unwrap();
+        }
+        {
+            // A well-formed record header claiming a zero-byte frame.
+            let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+            file.write_all(&[0u8; 16]).unwrap();
+        }
+        let mut reader = PcapReader::open(&path).unwrap();
+        let mut buffer = [0u8; 2048];
+        assert_eq!(reader.read_frame(&mut buffer).unwrap(), ARP_FRAME.len());
+        let error = reader.read_frame(&mut buffer).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("zero-byte frame"), "{error}");
         let _ = fs::remove_file(path);
     }
 

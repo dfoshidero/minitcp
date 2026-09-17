@@ -11,7 +11,14 @@ use minitcp::interface::FrameIo;
 use minitcp::interface::tap::TapInterface;
 
 pub(crate) const DEFAULT_FWD: &str = "127.0.0.1:7946";
-pub(crate) const DEFAULT_LISTEN: &str = "0.0.0.0:7946";
+/// Loopback, deliberately. This socket hands out raw Ethernet frames on a TAP
+/// with no authentication: anyone who can connect can read everything crossing
+/// that link and inject frames onto it. The sidecar overrides this with
+/// `0.0.0.0`, because inside a container that is loopback in effect — the
+/// `docker run` line publishes the port on 127.0.0.1 only, so the container
+/// namespace is the boundary. Run by hand on a real host, `0.0.0.0` would be an
+/// open door, so it is not what you get by default.
+pub(crate) const DEFAULT_LISTEN: &str = "127.0.0.1:7946";
 
 const CONNECT_RETRY: Duration = Duration::from_secs(8);
 const CONNECT_INTERVAL: Duration = Duration::from_millis(200);
@@ -121,7 +128,13 @@ fn read_record(stream: &mut TcpStream, buffer: &mut [u8]) -> io::Result<usize> {
     stream.read_exact(&mut len_buf[1..])?;
     let n = u32::from_be_bytes(len_buf) as usize;
     if n == 0 {
-        return Ok(0);
+        // `Ok(0)` is how the read loop learns the peer went away. A zero-length
+        // record must not say the same thing, or one desynchronised byte would
+        // end the session while looking like a tidy disconnect.
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "forwarded frame claims zero bytes; the link is out of step",
+        ));
     }
     if n > MAX_FRAME {
         return Err(io::Error::new(
@@ -159,8 +172,28 @@ fn write_record(stream: &mut impl Write, frame: &[u8]) -> io::Result<()> {
 
 pub(crate) fn run_bridge(listen: &str, tap: TapInterface) -> io::Result<()> {
     let listener = TcpListener::bind(listen)?;
-    crate::log::status::info(format!("bridge listening on {listen}"));
+    let bound = listener.local_addr()?;
+    if let Some(warning) = exposure_warning(bound) {
+        crate::log::status::warn(warning);
+    }
+    crate::log::status::info(format!("bridge listening on {bound}"));
     accept_loop(listener, tap)
+}
+
+/// Binding beyond loopback is allowed — the sidecar does exactly that, and it
+/// may be what someone wants on a private lab network — but it should never
+/// happen by accident. Checks the address actually bound, so `0.0.0.0`, `::`
+/// and a specific LAN address are all caught the same way.
+fn exposure_warning(bound: SocketAddr) -> Option<String> {
+    if bound.ip().is_loopback() {
+        return None;
+    }
+    Some(format!(
+        "bridge is listening on {bound}, which is reachable from outside this machine. \
+         It has no authentication: anyone who can connect can read and inject frames \
+         on the TAP. Use --listen 127.0.0.1:{} unless you meant this.",
+        bound.port()
+    ))
 }
 
 fn accept_loop(listener: TcpListener, tap: TapInterface) -> io::Result<()> {
@@ -317,6 +350,42 @@ mod tests {
         let client = handle.join().unwrap().expect("connect should succeed");
         drop(peer);
         drop(client);
+    }
+
+    #[test]
+    fn a_zero_length_prefix_is_corruption_not_a_disconnect() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream.write_all(&0u32.to_be_bytes()).unwrap();
+            // Hold the connection open so a real close cannot be the cause.
+            thread::sleep(Duration::from_millis(200));
+        });
+
+        let mut frames = TcpFrames::connect(&addr.to_string()).unwrap();
+        let error = frames.read_frame(&mut [0u8; 2048]).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("out of step"), "{error}");
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn the_bridge_keeps_to_itself_by_default() {
+        let addr: SocketAddr = DEFAULT_LISTEN.parse().unwrap();
+        assert!(addr.ip().is_loopback(), "{DEFAULT_LISTEN}");
+        assert!(exposure_warning(addr).is_none());
+    }
+
+    #[test]
+    fn binding_beyond_loopback_is_said_out_loud() {
+        for exposed in ["0.0.0.0:7946", "192.168.1.5:7946", "[::]:7946"] {
+            let warning = exposure_warning(exposed.parse().unwrap());
+            let warning = warning.unwrap_or_else(|| panic!("{exposed} should warn"));
+            assert!(warning.contains("no authentication"), "{warning}");
+            assert!(warning.contains("127.0.0.1:7946"), "{warning}");
+        }
+        assert!(exposure_warning("[::1]:7946".parse().unwrap()).is_none());
     }
 
     #[test]
