@@ -4,7 +4,7 @@ mod cli;
 mod fwd;
 mod log;
 mod process;
-mod stack;
+mod runner;
 mod tapcmd;
 mod tui;
 mod update;
@@ -64,13 +64,13 @@ fn run() -> Result<(), AppError> {
             log::write_stdout(&format!("minitcp {}\n", env!("MINITCP_RELEASE"))).map_err(Into::into)
         }
         Command::Run => tui::run_lab(cfg).map_err(Into::into),
-        Command::Stack | Command::Replay(_) => stack::run_stack(cfg).map_err(Into::into),
+        Command::Stack | Command::Replay(_) => runner::run_stack(cfg).map_err(Into::into),
         Command::Pcap(path) => {
             let output = minitcp::interface::pcap::pcap_info(&path)?;
             log::write_stdout(&output)?;
             Ok(())
         }
-        Command::Bridge => stack::run_bridge(cfg).map_err(Into::into),
+        Command::Bridge => runner::run_bridge(cfg).map_err(Into::into),
         Command::TapUp => tapcmd::tap_up(&cfg).map_err(Into::into),
         Command::TapDown => tapcmd::tap_down(&cfg).map_err(Into::into),
         Command::TapShow => {

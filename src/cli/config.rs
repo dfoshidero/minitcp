@@ -3,6 +3,9 @@ use std::path::PathBuf;
 
 use minitcp::proto::arp::{OUR_IP, OUR_MAC};
 use minitcp::proto::ethernet::MacAddress;
+// The stack's own vocabulary. The CLI only decides how to spell it on a command line.
+pub(crate) use minitcp::stack::DropKind;
+use minitcp::stack::StackConfig;
 
 use super::error::{ParseError, flag_usage};
 
@@ -39,32 +42,16 @@ pub(crate) enum Command {
     IdentitySetMac(MacAddress),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum DropKind {
-    Arp,
-    Icmp,
-    Ip,
-}
-
-impl DropKind {
-    pub(crate) fn parse(name: &str) -> Result<Self, ParseError> {
-        match name.trim().to_ascii_lowercase().as_str() {
-            "arp" => Ok(Self::Arp),
-            "icmp" => Ok(Self::Icmp),
-            "ip" => Ok(Self::Ip),
-            other => Err(ParseError::with_usage(
-                format!("unknown drop kind '{other}' (want arp, icmp, or ip)"),
-                flag_usage("--drop"),
-            )),
-        }
-    }
-
-    pub(crate) fn name(self) -> &'static str {
-        match self {
-            Self::Arp => "arp",
-            Self::Icmp => "icmp",
-            Self::Ip => "ip",
-        }
+/// `DropKind` is the library's; the CLI only adds how to spell it on a command line.
+pub(crate) fn parse_drop_kind(name: &str) -> Result<DropKind, ParseError> {
+    match name.trim().to_ascii_lowercase().as_str() {
+        "arp" => Ok(DropKind::Arp),
+        "icmp" => Ok(DropKind::Icmp),
+        "ip" => Ok(DropKind::Ip),
+        other => Err(ParseError::with_usage(
+            format!("unknown drop kind '{other}' (want arp, icmp, or ip)"),
+            flag_usage("--drop"),
+        )),
     }
 }
 
@@ -115,8 +102,16 @@ impl Config {
         }
     }
 
-    pub(crate) fn our_ip_bytes(&self) -> [u8; 4] {
-        self.addr.octets()
+    /// The slice of this configuration the library stack actually needs.
+    pub(crate) fn stack_config(&self) -> StackConfig {
+        StackConfig {
+            addr: self.addr,
+            mac: self.mac,
+            ttl: self.ttl,
+            icmp_id: self.icmp_id,
+            drop: self.drop.clone(),
+            drop_pct: self.drop_pct,
+        }
     }
 
     pub(crate) fn verbose(&self) -> bool {
