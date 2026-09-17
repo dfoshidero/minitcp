@@ -4,8 +4,8 @@ use std::net::Ipv4Addr;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::proto::arp::OUR_MAC;
-use crate::proto::ethernet::MacAddress;
+use minitcp::proto::arp::OUR_MAC;
+use minitcp::proto::ethernet::MacAddress;
 
 fn args(parts: &[&str]) -> Vec<String> {
     parts.iter().map(|s| s.to_string()).collect()

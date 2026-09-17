@@ -18,7 +18,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
 use ratatui::{DefaultTerminal, Frame};
 
 use crate::cli::Config;
-use crate::interface::fwd::DEFAULT_FWD;
+use crate::fwd::DEFAULT_FWD;
 use crate::tapcmd::CONTAINER;
 
 const MAX_LINES: usize = 2000;

@@ -1,10 +1,9 @@
 // src/main.rs
 
 mod cli;
-mod interface;
+mod fwd;
 mod log;
 mod process;
-mod proto;
 mod stack;
 mod tapcmd;
 mod tui;
@@ -67,7 +66,7 @@ fn run() -> Result<(), AppError> {
         Command::Run => tui::run_lab(cfg).map_err(Into::into),
         Command::Stack | Command::Replay(_) => stack::run_stack(cfg).map_err(Into::into),
         Command::Pcap(path) => {
-            let output = crate::interface::pcap::pcap_info(&path)?;
+            let output = minitcp::interface::pcap::pcap_info(&path)?;
             log::write_stdout(&output)?;
             Ok(())
         }

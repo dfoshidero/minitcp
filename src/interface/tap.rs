@@ -30,8 +30,9 @@ impl TapInterface {
         })
     }
 
-    #[cfg(test)]
-    pub(crate) fn from_file(file: File) -> Self {
+    /// Wrap an already-open file descriptor as a frame source. Useful for
+    /// tests and for feeding the stack from a socketpair or pipe.
+    pub fn from_file(file: File) -> Self {
         Self { file }
     }
 }
@@ -40,47 +41,6 @@ impl TapInterface {
 impl std::os::fd::AsRawFd for TapInterface {
     fn as_raw_fd(&self) -> std::os::fd::RawFd {
         std::os::fd::AsRawFd::as_raw_fd(&self.file)
-    }
-}
-
-/// Create the TAP and give Linux an address (sidecar / local Linux).
-pub fn ensure_iface(name: &str, linux_addr: std::net::Ipv4Addr) -> io::Result<()> {
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = (name, linux_addr);
-        Ok(())
-    }
-    #[cfg(target_os = "linux")]
-    {
-        use crate::process::AllowedFailure;
-
-        let user = std::env::var("USER").unwrap_or_else(|_| "root".into());
-        let add = ["tuntap", "add", "dev", name, "mode", "tap", "user", &user];
-        run_ip(&add, AllowedFailure::AlreadyExists)?;
-        let cidr = format!("{linux_addr}/24");
-        run_ip(
-            &["addr", "add", &cidr, "dev", name],
-            AllowedFailure::AlreadyExists,
-        )?;
-        run_ip(&["link", "set", "dev", name, "up"], AllowedFailure::None)?;
-        Ok(())
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn run_ip(args: &[&str], allowed: crate::process::AllowedFailure) -> io::Result<()> {
-    use crate::process::run_checked;
-
-    match run_checked("ip", args, allowed) {
-        Ok(()) => Ok(()),
-        Err(direct_error) => {
-            let sudo_args: Vec<_> = std::iter::once("ip").chain(args.iter().copied()).collect();
-            run_checked("sudo", &sudo_args, allowed).map_err(|sudo_error| {
-                io::Error::other(format!(
-                    "could not configure TAP directly ({direct_error}); sudo also failed ({sudo_error})"
-                ))
-            })
-        }
     }
 }
 
@@ -121,7 +81,7 @@ fn linux_open(tun: &Path, name: &str) -> io::Result<TapInterface> {
     Ok(TapInterface { file })
 }
 
-impl crate::interface::FrameIo for TapInterface {
+impl super::FrameIo for TapInterface {
     fn read_frame(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
         self.file.read(buffer)
     }

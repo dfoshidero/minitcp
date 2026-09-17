@@ -7,14 +7,14 @@ use std::thread;
 use std::time::Duration;
 
 use crate::cli::{Command, Config, DropKind};
-use crate::interface::FrameIo;
-use crate::interface::pcap::{CaptureIo, HexReader, PcapReader, PcapWriter};
-use crate::interface::tap::TapInterface;
 use crate::log::{self, Verb};
-use crate::proto::arp::reply_for;
-use crate::proto::ethernet::{EthernetFrame, EthernetType};
-use crate::proto::icmp::{make_echo_reply, set_echo_id};
-use crate::proto::ipv4::{Ipv4Packet, Protocol};
+use minitcp::interface::FrameIo;
+use minitcp::interface::pcap::{CaptureIo, HexReader, PcapReader, PcapWriter};
+use minitcp::interface::tap::TapInterface;
+use minitcp::proto::arp::reply_for;
+use minitcp::proto::ethernet::{EthernetFrame, EthernetType};
+use minitcp::proto::icmp::{make_echo_reply, set_echo_id};
+use minitcp::proto::ipv4::{Ipv4Packet, Protocol};
 
 fn protocol_name(protocol: Protocol) -> String {
     match protocol {
@@ -163,9 +163,9 @@ fn retryable_tap_attach(error: &io::Error) -> bool {
 }
 
 pub fn run_bridge(cfg: Config) -> std::io::Result<()> {
-    crate::interface::tap::ensure_iface(&cfg.iface, cfg.linux_addr)?;
+    crate::tapcmd::ensure_iface(&cfg.iface, cfg.linux_addr)?;
     let tap = open_tap(&cfg)?;
-    crate::interface::fwd::run_bridge(&cfg.listen, tap)
+    crate::fwd::run_bridge(&cfg.listen, tap)
 }
 
 pub fn run_stack(cfg: Config) -> std::io::Result<()> {
@@ -182,7 +182,7 @@ pub fn run_stack(cfg: Config) -> std::io::Result<()> {
     }
     if cfg.use_fwd() {
         let addr = cfg.fwd_addr();
-        let frames = crate::interface::fwd::TcpFrames::connect(&addr).map_err(|error| {
+        let frames = crate::fwd::TcpFrames::connect(&addr).map_err(|error| {
             io::Error::new(
                 error.kind(),
                 format!("cannot connect to TAP sidecar at {addr}; try `minitcp tap up`: {error}"),
@@ -488,9 +488,9 @@ fn handle_frame(cfg: &Config, bytes: &[u8], rng: &mut SeededRng) -> Option<Vec<u
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interface::pcap::pcap_info;
-    use crate::proto::checksum::internet_checksum;
-    use crate::proto::ethernet::MacAddress;
+    use minitcp::interface::pcap::pcap_info;
+    use minitcp::proto::checksum::internet_checksum;
+    use minitcp::proto::ethernet::MacAddress;
     use std::cell::RefCell;
     use std::collections::VecDeque;
     use std::fs;

@@ -7,8 +7,8 @@ use std::os::unix::net::UnixStream;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use super::FrameIo;
-use super::tap::TapInterface;
+use minitcp::interface::FrameIo;
+use minitcp::interface::tap::TapInterface;
 
 pub const DEFAULT_FWD: &str = "127.0.0.1:7946";
 pub const DEFAULT_LISTEN: &str = "0.0.0.0:7946";
