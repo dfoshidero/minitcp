@@ -23,10 +23,10 @@ pub(crate) fn nag_if_outdated() {
     let current = env!("MINITCP_RELEASE").trim_start_matches('v');
     let latest = latest.trim_start_matches('v');
     if version_newer(latest, current) {
-        crate::log::status::info(format!(
+        crate::app::log::status::info(format!(
             "minitcp {latest} is available (you have {current})"
         ));
-        crate::log::status::info(format!(
+        crate::app::log::status::info(format!(
             "Update: curl -fsSL https://github.com/{REPO}/releases/latest/download/install.sh | sh"
         ));
     }

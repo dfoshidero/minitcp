@@ -1,13 +1,8 @@
 // src/main.rs
 
-mod cli;
-mod fwd;
-mod log;
-mod process;
-mod runner;
-mod tapcmd;
-mod tui;
-mod update;
+mod app;
+
+use app::{cli, log, runner, tapcmd, tui, update};
 
 use cli::{Command, HelpTopic};
 

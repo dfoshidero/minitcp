@@ -96,7 +96,7 @@ impl Config {
             ttl: DEFAULT_TTL,
             icmp_id: None,
             fwd: None,
-            listen: crate::fwd::DEFAULT_LISTEN.into(),
+            listen: crate::app::fwd::DEFAULT_LISTEN.into(),
             offline: false,
             config_path: PathBuf::from(DEFAULT_CONFIG),
         }
@@ -129,7 +129,7 @@ impl Config {
     pub(crate) fn fwd_addr(&self) -> String {
         self.fwd
             .clone()
-            .unwrap_or_else(|| crate::fwd::DEFAULT_FWD.into())
+            .unwrap_or_else(|| crate::app::fwd::DEFAULT_FWD.into())
     }
 
     /// Flags the TUI child `minitcp stack` process should inherit.

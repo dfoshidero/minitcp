@@ -17,9 +17,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
 use ratatui::{DefaultTerminal, Frame};
 
-use crate::cli::Config;
-use crate::fwd::DEFAULT_FWD;
-use crate::tapcmd::CONTAINER;
+use crate::app::cli::Config;
+use crate::app::fwd::DEFAULT_FWD;
+use crate::app::tapcmd::CONTAINER;
 
 const MAX_LINES: usize = 2000;
 const SHORT_COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
@@ -396,17 +396,17 @@ fn read_dump_pid(stdout: &mut std::process::ChildStdout) -> Option<i32> {
 fn stop_privileged(pid: i32, signal: &str) {
     let signal = format!("-{signal}");
     let pid = pid.to_string();
-    match crate::process::output_timeout(
+    match crate::app::process::output_timeout(
         "sudo",
         &["-n", "kill", &signal, "--", &pid],
         Duration::from_secs(3),
     ) {
         Ok(output) if output.status.success() => {}
-        Ok(output) => crate::log::status::warn(format!(
+        Ok(output) => crate::app::log::status::warn(format!(
             "could not stop privileged tcpdump process {pid}: {}",
-            crate::process::output_detail(&output)
+            crate::app::process::output_detail(&output)
         )),
-        Err(error) => crate::log::status::warn(format!(
+        Err(error) => crate::app::log::status::warn(format!(
             "could not stop privileged tcpdump process {pid}: {error}"
         )),
     }
@@ -466,7 +466,7 @@ struct Lab {
 /// output streams there. `None` means it could not run (already reported).
 fn run_capture(tx: &Sender<Msg>, program: &str, args: &[&str]) -> Option<std::process::Output> {
     let _ = tx.send(Msg::Action(format!("$ {program} {}", args.join(" "))));
-    match crate::process::output_timeout(program, args, SHORT_COMMAND_TIMEOUT) {
+    match crate::app::process::output_timeout(program, args, SHORT_COMMAND_TIMEOUT) {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
             let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
@@ -516,7 +516,7 @@ fn ensure_tap(cfg: &Config, tx: &Sender<Msg>) {
 
     let sys = format!("/sys/class/net/{}", cfg.iface);
     if !Path::new(&sys).exists() {
-        let user = crate::process::output_timeout("id", &["-un"], SHORT_COMMAND_TIMEOUT)
+        let user = crate::app::process::output_timeout("id", &["-un"], SHORT_COMMAND_TIMEOUT)
             .ok()
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
             .filter(|s| !s.is_empty())
@@ -533,7 +533,7 @@ fn ensure_tap(cfg: &Config, tx: &Sender<Msg>) {
     }
 
     let cidr = format!("{}/24", cfg.linux_addr);
-    let has_addr = crate::process::output_timeout(
+    let has_addr = crate::app::process::output_timeout(
         "ip",
         &["-4", "addr", "show", "dev", &cfg.iface],
         SHORT_COMMAND_TIMEOUT,
@@ -597,7 +597,7 @@ fn tap_status(iface: &str, linux_addr: &str) -> (bool, String) {
     if !up {
         return (false, "down".into());
     }
-    let out = crate::process::output_timeout(
+    let out = crate::app::process::output_timeout(
         "ip",
         &["-br", "addr", "show", iface],
         SHORT_COMMAND_TIMEOUT,
@@ -1335,7 +1335,7 @@ pub(crate) fn run_lab(cfg: Config) -> std::io::Result<()> {
     })?;
     let result = ui_loop(&mut terminal, &mut lab);
     if let Err(error) = ratatui::try_restore() {
-        crate::log::status::warn(format!("could not fully restore terminal: {error}"));
+        crate::app::log::status::warn(format!("could not fully restore terminal: {error}"));
     }
     lab.stack.kill();
     lab.dump.kill();

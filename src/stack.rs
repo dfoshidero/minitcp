@@ -7,12 +7,13 @@
 
 use std::net::Ipv4Addr;
 
-use crate::event::{
-    ArpOperation, DropReason, Dropped, Echo, Endpoints, Layer, Outcome, Scope, Step,
-};
+mod handlers;
+
+use handlers::handle_icmp;
+
+use crate::event::{ArpOperation, DropReason, Dropped, Endpoints, Layer, Outcome, Scope, Step};
 use crate::proto::arp::{OUR_IP, OUR_MAC, reply_for};
 use crate::proto::ethernet::{EthernetFrame, EthernetType, MacAddress};
-use crate::proto::icmp::{make_echo_reply, set_echo_id};
 use crate::proto::ipv4::{Ipv4Packet, Protocol};
 
 /// A kind of traffic to discard on purpose, so you can watch what breaks.
@@ -118,7 +119,7 @@ impl Stack {
 
         match frame.ethertype {
             EthernetType::Arp => self.handle_arp(&mut out, &frame, our_ip, our_mac),
-            EthernetType::Ipv4 => self.handle_ipv4(&mut out, &frame, our_ip, our_mac),
+            EthernetType::Ipv4 => self.handle_ipv4(&mut out, &frame),
             EthernetType::Unknown(_) => out.step_in(ethernet_layer(&frame)),
         }
         out
@@ -176,13 +177,7 @@ impl Stack {
         out.reply = Some(ethernet_reply);
     }
 
-    fn handle_ipv4(
-        &self,
-        out: &mut Outcome,
-        frame: &EthernetFrame<'_>,
-        our_ip: [u8; 4],
-        our_mac: MacAddress,
-    ) {
+    fn handle_ipv4(&self, out: &mut Outcome, frame: &EthernetFrame<'_>) {
         let packet = match Ipv4Packet::parse(frame.payload) {
             Ok(packet) => packet,
             Err(e) => {
@@ -202,61 +197,7 @@ impl Stack {
         });
 
         match packet.protocol {
-            Protocol::Icmp => {
-                if packet.destination.octets() != our_ip {
-                    out.drop_at("icmp", "L3", Scope::Payload, DropReason::NotForUs);
-                    return;
-                }
-                if self.drops(DropKind::Icmp) {
-                    out.drop_at("icmp", "L3", Scope::Payload, DropReason::Filtered);
-                    return;
-                }
-                out.step_in(icmp_layer(packet.payload));
-
-                let mut icmp_reply = match make_echo_reply(packet.payload) {
-                    Ok(reply) => reply,
-                    Err(e) => {
-                        out.drop_at("icmp", "L3", Scope::Payload, e);
-                        return;
-                    }
-                };
-                if let Some(id) = self.config.icmp_id {
-                    set_echo_id(&mut icmp_reply, id);
-                }
-
-                let mut ip_packet = Vec::new();
-                Ipv4Packet::write(
-                    &mut ip_packet,
-                    self.config.ttl,
-                    Protocol::Icmp,
-                    Ipv4Addr::from(our_ip),
-                    packet.source,
-                    &icmp_reply,
-                );
-                let mut ethernet_reply = Vec::new();
-                EthernetFrame::write_ethernet(
-                    &mut ethernet_reply,
-                    frame.source,
-                    our_mac,
-                    0x0800,
-                    &ip_packet,
-                );
-
-                out.steps.push(Step::Out(Layer::Ethernet {
-                    source: our_mac,
-                    destination: frame.source,
-                    ethertype: 0x0800,
-                }));
-                out.steps.push(Step::Out(Layer::Ipv4 {
-                    source: Ipv4Addr::from(our_ip),
-                    destination: packet.source,
-                    ttl: self.config.ttl,
-                    protocol: Protocol::Icmp,
-                    payload_len: icmp_reply.len(),
-                }));
-                out.steps.push(Step::Out(icmp_layer(&icmp_reply)));
-                out.reply = Some(ethernet_reply);
-            }
+            Protocol::Icmp => handle_icmp(out, &self.config, frame, &packet),
             // Milestones 7-14 replace these with real handlers.
             Protocol::Udp | Protocol::Tcp => {
                 let layer = if packet.protocol == Protocol::Udp {
@@ -274,11 +215,11 @@ impl Stack {
 }
 
 impl Outcome {
-    fn step_in(&mut self, layer: Layer) {
+    pub(crate) fn step_in(&mut self, layer: Layer) {
         self.steps.push(Step::In(layer));
     }
 
-    fn drop_at(
+    pub(crate) fn drop_at(
         &mut self,
         layer: &'static str,
         osi: &'static str,
@@ -303,18 +244,6 @@ fn ethernet_layer(frame: &EthernetFrame<'_>) -> Layer {
             EthernetType::Arp => 0x0806,
             EthernetType::Unknown(n) => n,
         },
-    }
-}
-
-fn icmp_layer(message: &[u8]) -> Layer {
-    Layer::Icmp {
-        kind: if message.is_empty() { 0 } else { message[0] },
-        code: if message.len() < 2 { 0 } else { message[1] },
-        echo: (message.len() >= 8).then(|| Echo {
-            id: u16::from_be_bytes([message[4], message[5]]),
-            sequence: u16::from_be_bytes([message[6], message[7]]),
-        }),
-        len: message.len(),
     }
 }
 
@@ -378,6 +307,7 @@ fn drop_pct_hit(pct: u8, rng: &mut SeededRng) -> bool {
 mod tests {
     use super::*;
     use crate::proto::checksum::internet_checksum;
+    use crate::proto::icmp::{make_echo_reply, set_echo_id};
 
     const ARP_REQUEST: [u8; 42] = [
         0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x02, 0x00, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00,

@@ -4,9 +4,9 @@ use std::io;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::cli::Config;
-use crate::fwd::DEFAULT_FWD;
-use crate::process::{self, AllowedFailure};
+use crate::app::cli::Config;
+use crate::app::fwd::DEFAULT_FWD;
+use crate::app::process::{self, AllowedFailure};
 
 pub(crate) const CONTAINER: &str = "minitcp-tap";
 const IMAGE: &str = "ghcr.io/dfoshidero/minitcp:latest";
@@ -44,7 +44,7 @@ pub(crate) fn tap_up(cfg: &Config) -> io::Result<()> {
             )));
         }
         DockerState::Unavailable(detail) => {
-            crate::log::status::warn(format!(
+            crate::app::log::status::warn(format!(
                 "Docker is unavailable ({detail}); using a local Linux TAP"
             ));
         }
@@ -64,7 +64,7 @@ pub(crate) fn tap_down(cfg: &Config) -> io::Result<()> {
     if matches!(&docker, DockerState::Ready) {
         let output = process::output_timeout("docker", &["rm", "-f", CONTAINER], COMMAND_TIMEOUT)?;
         if output.status.success() {
-            crate::log::status::ok(format!("stopped {CONTAINER}"));
+            crate::app::log::status::ok(format!("stopped {CONTAINER}"));
             return Ok(());
         }
         process::check_output(
@@ -76,7 +76,7 @@ pub(crate) fn tap_down(cfg: &Config) -> io::Result<()> {
     }
     if cfg!(target_os = "linux") {
         if let DockerState::Unavailable(detail) = docker {
-            crate::log::status::warn(format!(
+            crate::app::log::status::warn(format!(
                 "Docker is unavailable ({detail}); removing only the local Linux TAP"
             ));
         }
@@ -85,7 +85,7 @@ pub(crate) fn tap_down(cfg: &Config) -> io::Result<()> {
             &["ip", "link", "delete", &cfg.iface],
             AllowedFailure::DoesNotExist,
         )?;
-        crate::log::status::ok(format!("removed {} if it existed", cfg.iface));
+        crate::app::log::status::ok(format!("removed {} if it existed", cfg.iface));
         return Ok(());
     }
     if let DockerState::Unavailable(detail) = docker {
@@ -93,7 +93,7 @@ pub(crate) fn tap_down(cfg: &Config) -> io::Result<()> {
             "Docker is unavailable, so the TAP sidecar could not be stopped: {detail}"
         )));
     }
-    crate::log::status::info("TAP sidecar was not running");
+    crate::app::log::status::info("TAP sidecar was not running");
     Ok(())
 }
 
@@ -160,7 +160,7 @@ fn docker_up(cfg: &Config) -> io::Result<()> {
                 Err(error) => last_error = Some(error),
             }
             if attempt < DOCKER_RUN_ATTEMPTS {
-                crate::log::status::warn(format!(
+                crate::app::log::status::warn(format!(
                     "TAP sidecar start failed; retrying ({attempt}/{DOCKER_RUN_ATTEMPTS})"
                 ));
                 docker_rm_quiet();
@@ -177,7 +177,7 @@ fn docker_up(cfg: &Config) -> io::Result<()> {
     }
 
     wait_for_sidecar(cfg)?;
-    crate::log::status::ok(format!(
+    crate::app::log::status::ok(format!(
         "TAP sidecar up; Linux  {} on {}  (host stack: {})",
         cfg.linux_addr,
         cfg.iface,
@@ -190,7 +190,7 @@ fn wait_for_sidecar(cfg: &Config) -> io::Result<()> {
     let addr = cfg.fwd_addr();
     let deadline = Instant::now() + READY_TIMEOUT;
     loop {
-        if crate::fwd::probe(&addr, READY_INTERVAL).is_ok() {
+        if crate::app::fwd::probe(&addr, READY_INTERVAL).is_ok() {
             return Ok(());
         }
         if !container_running()? {
@@ -245,20 +245,20 @@ fn docker_rm_quiet() {
 fn dump_sidecar_logs() {
     match process::output_timeout("docker", &["logs", CONTAINER], COMMAND_TIMEOUT) {
         Ok(out) => {
-            crate::log::status::info(format!("--- docker logs {CONTAINER} ---"));
+            crate::app::log::status::info(format!("--- docker logs {CONTAINER} ---"));
             let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
             text.push_str(&String::from_utf8_lossy(&out.stderr));
             if text.trim().is_empty() {
-                let _ = crate::log::write_stderr("(no container logs)\n");
+                let _ = crate::app::log::write_stderr("(no container logs)\n");
             } else {
                 if !text.ends_with('\n') {
                     text.push('\n');
                 }
-                let _ = crate::log::write_stderr(&text);
+                let _ = crate::app::log::write_stderr(&text);
             }
-            crate::log::status::info("--- end docker logs ---");
+            crate::app::log::status::info("--- end docker logs ---");
         }
-        Err(error) => crate::log::status::warn(format!(
+        Err(error) => crate::app::log::status::warn(format!(
             "could not read Docker logs for {CONTAINER}: {error}"
         )),
     }
@@ -284,7 +284,7 @@ fn local_linux_up(cfg: &Config) -> io::Result<()> {
         &["ip", "link", "set", "dev", &cfg.iface, "up"],
         AllowedFailure::None,
     )?;
-    crate::log::status::ok(format!("local TAP {} up ({})", cfg.iface, cidr));
+    crate::app::log::status::ok(format!("local TAP {} up ({})", cfg.iface, cidr));
     Ok(())
 }
 
@@ -297,7 +297,7 @@ pub(crate) fn ensure_iface(name: &str, linux_addr: std::net::Ipv4Addr) -> io::Re
     }
     #[cfg(target_os = "linux")]
     {
-        use crate::process::AllowedFailure;
+        use crate::app::process::AllowedFailure;
 
         let user = owner_uid();
         let add = ["tuntap", "add", "dev", name, "mode", "tap", "user", &user];
@@ -313,8 +313,8 @@ pub(crate) fn ensure_iface(name: &str, linux_addr: std::net::Ipv4Addr) -> io::Re
 }
 
 #[cfg(target_os = "linux")]
-fn run_ip(args: &[&str], allowed: crate::process::AllowedFailure) -> io::Result<()> {
-    use crate::process::run_checked;
+fn run_ip(args: &[&str], allowed: crate::app::process::AllowedFailure) -> io::Result<()> {
+    use crate::app::process::run_checked;
 
     match run_checked("ip", args, allowed) {
         Ok(()) => Ok(()),

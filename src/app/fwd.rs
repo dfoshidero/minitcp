@@ -174,9 +174,9 @@ pub(crate) fn run_bridge(listen: &str, tap: TapInterface) -> io::Result<()> {
     let listener = TcpListener::bind(listen)?;
     let bound = listener.local_addr()?;
     if let Some(warning) = exposure_warning(bound) {
-        crate::log::status::warn(warning);
+        crate::app::log::status::warn(warning);
     }
-    crate::log::status::info(format!("bridge listening on {bound}"));
+    crate::app::log::status::info(format!("bridge listening on {bound}"));
     accept_loop(listener, tap)
 }
 
@@ -199,13 +199,13 @@ fn exposure_warning(bound: SocketAddr) -> Option<String> {
 fn accept_loop(listener: TcpListener, tap: TapInterface) -> io::Result<()> {
     loop {
         let (stream, peer) = listener.accept()?;
-        crate::log::status::info(format!("bridge client {peer}"));
+        crate::app::log::status::info(format!("bridge client {peer}"));
         stream.set_nodelay(true)?;
         let session = tap.try_clone()?;
         match pump(session, stream) {
             Ok(()) => {}
             Err(e) if client_gone(&e) => {
-                crate::log::status::info(format!("bridge client {peer} closed"));
+                crate::app::log::status::info(format!("bridge client {peer} closed"));
             }
             Err(e) => return Err(e),
         }

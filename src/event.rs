@@ -97,7 +97,7 @@ pub enum Layer {
         src_port: u16,
         dst_port: u16,
         len: usize,
-    }
+    },
 }
 
 /// The identifier and sequence number `ping` uses to match replies to requests.

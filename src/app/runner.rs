@@ -8,8 +8,8 @@ use std::path::Path;
 use std::thread;
 use std::time::Duration;
 
-use crate::cli::{Command, Config};
-use crate::log;
+use crate::app::cli::{Command, Config};
+use crate::app::log;
 use minitcp::interface::FrameIo;
 use minitcp::interface::pcap::{CaptureIo, HexReader, PcapReader, PcapWriter};
 use minitcp::interface::tap::TapInterface;
@@ -63,9 +63,9 @@ fn retryable_tap_attach(error: &io::Error) -> bool {
 }
 
 pub(crate) fn run_bridge(cfg: Config) -> std::io::Result<()> {
-    crate::tapcmd::ensure_iface(&cfg.iface, cfg.linux_addr)?;
+    crate::app::tapcmd::ensure_iface(&cfg.iface, cfg.linux_addr)?;
     let tap = open_tap(&cfg)?;
-    crate::fwd::run_bridge(&cfg.listen, tap)
+    crate::app::fwd::run_bridge(&cfg.listen, tap)
 }
 
 pub(crate) fn run_stack(cfg: Config) -> std::io::Result<()> {
@@ -82,7 +82,7 @@ pub(crate) fn run_stack(cfg: Config) -> std::io::Result<()> {
     }
     if cfg.use_fwd() {
         let addr = cfg.fwd_addr();
-        let frames = crate::fwd::TcpFrames::connect(&addr).map_err(|error| {
+        let frames = crate::app::fwd::TcpFrames::connect(&addr).map_err(|error| {
             io::Error::new(
                 error.kind(),
                 format!("cannot connect to TAP sidecar at {addr}; try `minitcp tap up`: {error}"),
