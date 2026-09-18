@@ -313,6 +313,20 @@ fn render_layer(when: &str, first: &mut bool, layer: &Layer, outbound: bool) {
             );
             *first = false;
         }
+        Layer::Udp {
+            src_port,
+            dst_port,
+            len,
+        } => {
+            emit_inside(
+                when,
+                Verb::More,
+                "udp",
+                "L4",
+                &format!("{src_port} -> {dst_port} len={len}"),
+            );
+            *first = false;
+        }
     }
 }
 
@@ -351,6 +365,15 @@ fn render_quiet(when: &str, outcome: &Outcome) {
             &endpoints(outcome.network),
             &format!("echo id={id} seq={seq}  len={len}"),
         );
+    } else if let Some(Layer::Udp {src_port, dst_port, len}) =
+        outcome.inbound(|l| matches!(l, Layer::Udp { .. }))
+    {
+        emit_quiet(
+            when,
+            "udp",
+            &endpoints(outcome.network),
+            &format!("{src_port} -> {dst_port} len={len}")
+        )
     }
 }
 

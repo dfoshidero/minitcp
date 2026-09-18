@@ -93,6 +93,11 @@ pub enum Layer {
         echo: Option<Echo>,
         len: usize,
     },
+    Udp {
+        src_port: u16,
+        dst_port: u16,
+        len: usize,
+    }
 }
 
 /// The identifier and sequence number `ping` uses to match replies to requests.
