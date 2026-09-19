@@ -151,6 +151,8 @@ pub enum DropReason {
     TruncatedArp,
     /// A transport this stack does not speak yet.
     NotImplemented,
+    /// A UDP port with no service bound.
+    NoListener,
     /// An IPv4 protocol number with no handler.
     UnknownProtocol(u8),
 }
@@ -164,6 +166,7 @@ impl std::fmt::Display for DropReason {
             Self::RandomLoss => f.write_str("random drop"),
             Self::TruncatedArp => f.write_str("truncated ARP payload"),
             Self::NotImplemented => f.write_str("not implemented"),
+            Self::NoListener => f.write_str("no listener"),
             Self::UnknownProtocol(n) => write!(f, "unknown protocol {n}"),
         }
     }

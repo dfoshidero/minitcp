@@ -25,6 +25,12 @@ pub enum ParseError {
     NotEchoRequest,
     /// The ICMP checksum does not come out to zero.
     BadIcmpChecksum,
+    /// Fewer bytes than the 8-byte UDP header needs.
+    TruncatedUdp,
+    /// UDP Length is under 8 or longer than the bytes we hold.
+    InvalidUdpLength,
+    /// The UDP checksum does not come out to zero.
+    BadUdpChecksum,
 }
 
 impl ParseError {
@@ -38,6 +44,7 @@ impl ParseError {
             | Self::Ipv4FragmentUnsupported
             | Self::BadIpv4Checksum => "ipv4",
             Self::TruncatedIcmpEcho | Self::NotEchoRequest | Self::BadIcmpChecksum => "icmp",
+            Self::TruncatedUdp | Self::InvalidUdpLength | Self::BadUdpChecksum => "udp",
         }
     }
 }
@@ -54,6 +61,9 @@ impl std::fmt::Display for ParseError {
             Self::TruncatedIcmpEcho => "truncated ICMP echo",
             Self::NotEchoRequest => "not echo request",
             Self::BadIcmpChecksum => "bad icmp checksum",
+            Self::TruncatedUdp => "truncated UDP: datagram too short",
+            Self::InvalidUdpLength => "UDP: invalid length",
+            Self::BadUdpChecksum => "bad udp checksum"
         })
     }
 }
