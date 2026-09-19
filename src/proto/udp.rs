@@ -1,5 +1,6 @@
 // src/proto/udp.rs
 
+use super::error::ParseError;
 use super::checksum::transport_checksum_ipv4;
 
 pub struct UdpDatagram<'a> {
@@ -10,15 +11,15 @@ pub struct UdpDatagram<'a> {
 }
 
 impl<'a> UdpDatagram<'a> {
-    pub fn parse(input: &'a [u8]) -> Result<Self, &'static str> {
+    pub fn parse(input: &'a [u8]) -> Result<Self, ParseError> {
         if input.len() < 8 {
-            return Err("truncated UDP: datagram too short");
+            return Err(ParseError::TruncatedUdp);
         }
         let src_port = u16::from_be_bytes([input[0], input[1]]);
         let dst_port = u16::from_be_bytes([input[2], input[3]]);
         let length = u16::from_be_bytes([input[4], input[5]]) as usize;
         if length < 8 || length > input.len() {
-            return Err("UDP: invalid length");
+            return Err(ParseError::InvalidUdpLength);
         }
         let checksum = u16::from_be_bytes([input[6], input[7]]);
         let payload = &input[8..length];
@@ -46,7 +47,6 @@ pub fn write(
     src_port: u16,
     dst_port: u16,
     payload: &[u8],
-    checksum: u16,
 ) {
     let start = out.len();
     let length = (8 + payload.len()) as u16;
@@ -72,7 +72,7 @@ mod tests {
     /// A datagram straight from `write`: length and checksum are already correct.
     fn datagram(src_port: u16, dst_port: u16, payload: &[u8]) -> Vec<u8> {
         let mut out = Vec::new();
-        write(&mut out, SRC, DST, src_port, dst_port, payload, 0);
+        write(&mut out, SRC, DST, src_port, dst_port, payload);
         out
     }
 
@@ -81,7 +81,7 @@ mod tests {
         // Seven bytes cannot hold the 8-byte header, so there is nothing to read.
         assert_eq!(
             UdpDatagram::parse(&[0; 7]).err(),
-            Some("truncated UDP: datagram too short")
+            Some(ParseError::TruncatedUdp)
         );
     }
 
@@ -92,7 +92,7 @@ mod tests {
         bytes[4..6].copy_from_slice(&7u16.to_be_bytes());
         assert_eq!(
             UdpDatagram::parse(&bytes).err(),
-            Some("UDP: invalid length")
+            Some(ParseError::InvalidUdpLength)
         );
     }
 
@@ -103,7 +103,7 @@ mod tests {
         bytes[4..6].copy_from_slice(&100u16.to_be_bytes());
         assert_eq!(
             UdpDatagram::parse(&bytes).err(),
-            Some("UDP: invalid length")
+            Some(ParseError::InvalidUdpLength)
         );
     }
 
@@ -147,7 +147,7 @@ mod tests {
     fn writes_at_the_end_of_a_non_empty_buffer() {
         // The IPv4 header comes first in real use, so `write` must respect `start`.
         let mut out = vec![0xaa; 20];
-        write(&mut out, SRC, DST, 0x1234, 0x5678, b"hello", 0);
+        write(&mut out, SRC, DST, 0x1234, 0x5678, b"hello");
         assert_eq!(&out[..20], &[0xaa; 20]);
         assert!(checksum_ok(SRC, DST, &out[20..]));
         assert_eq!(UdpDatagram::parse(&out[20..]).unwrap().payload, b"hello");

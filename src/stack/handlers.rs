@@ -12,7 +12,7 @@ use crate::event::{DropReason, Echo, Layer, Outcome, Scope, Step};
 use crate::proto::ethernet::EthernetFrame;
 use crate::proto::icmp::{make_echo_reply, set_echo_id};
 use crate::proto::ipv4::{Ipv4Packet, Protocol};
-use crate::proto::udp::UdpDatagram
+use crate::proto::udp::UdpDatagram;
 use crate::stack::{DropKind, StackConfig};
 
 /// Answer an ICMP echo request addressed to us.
@@ -95,3 +95,7 @@ pub(crate) fn icmp_layer(message: &[u8]) -> Layer {
         len: message.len(),
     }
 }
+
+pub(crate) fn handle_udp(
+
+){}
