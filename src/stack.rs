@@ -9,7 +9,7 @@ use std::net::Ipv4Addr;
 
 mod handlers;
 
-use handlers::handle_icmp;
+use handlers::{handle_icmp, handle_udp};
 
 use crate::event::{ArpOperation, DropReason, Dropped, Endpoints, Layer, Outcome, Scope, Step};
 use crate::proto::arp::{OUR_IP, OUR_MAC, reply_for};
@@ -198,14 +198,9 @@ impl Stack {
 
         match packet.protocol {
             Protocol::Icmp => handle_icmp(out, &self.config, frame, &packet),
-            // Milestones 7-14 replace these with real handlers.
-            Protocol::Udp | Protocol::Tcp => {
-                let layer = if packet.protocol == Protocol::Udp {
-                    "udp"
-                } else {
-                    "tcp"
-                };
-                out.drop_at(layer, "L4", Scope::Payload, DropReason::NotImplemented);
+            Protocol::Udp => handle_udp(out, &self.config, frame &packet),
+            Protocol::Tcp => {
+                out.drop_at("tcp", "L4", Scope::Payload, DropReason::NotImplemented);
             }
             Protocol::Unknown(n) => {
                 out.drop_at("ipv4", "L3", Scope::Network, DropReason::UnknownProtocol(n));
